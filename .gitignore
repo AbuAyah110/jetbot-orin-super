@@ -20,6 +20,17 @@ build/
 /data/*
 !/data/**/
 !/data/**/.gitkeep
+# Ignore captured images/logs but keep directory placeholders
+/data/images/**
+!/data/images/.gitkeep
+/data/logs/**
+!/data/logs/.gitkeep
+/data/memory/**
+!/data/memory/.gitkeep
+/data/maps/**
+!/data/maps/.gitkeep
+/data/benchmarks/**
+!/data/benchmarks/.gitkeep
 
 # ROS build artifacts
 ros2_ws/build/
