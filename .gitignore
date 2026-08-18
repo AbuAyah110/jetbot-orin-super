@@ -8,9 +8,22 @@ dist/
 build/
 .env
 .env.*
+!.env.example
 *.engine
 *.onnx
+*.gguf
+*.safetensors
+*.bin
 .DS_Store
+
+# Runtime data (keep placeholders)
+data/**
+!data/**/.gitkeep
+
+# ROS build artifacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
 
 # MkDocs documentation
 site/

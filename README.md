@@ -1,67 +1,80 @@
 # JetBot Orin Super
 
-An open-source **JetBot** build guide and software fork for **NVIDIA Jetson Orin Nano Super**.
+Hardware build guide **and** agentic AI robotics stack for **NVIDIA Jetson Orin Nano Super 8GB**.
 
-This project starts from the official [NVIDIA JetBot](https://github.com/NVIDIA-AI-IOT/jetbot) platform and [jetbot.org](https://jetbot.org/master/) documentation, then adapts hardware notes and motor I2C defaults for Orin Nano / Orin Nano Super.
+Architectural source of truth: **[`PROJECT_PLAN.md`](PROJECT_PLAN.md)**.
 
-> **Phase 1 (this repo today):** mechanical JetBot + motion + classic notebooks on Orin Nano Super.  
-> **Phase 2 (coming next):** conversational robot — microphone, speaker, VLM, ASR, TTS, and on-device RAG.
+## Two layers in one repo
 
-## Why this fork?
-
-| Item | Original JetBot (Nano) | This project (Orin Nano Super) |
+| Layer | Status | Docs |
 | --- | --- | --- |
-| Compute | Jetson Nano | Jetson Orin Nano Super |
-| Motor I2C bus | often `0` | **`1`** (40-pin header) |
-| Motor chip address | `96` (`0x60`) | **`112` (`0x70`)** on many Orin expansion boards |
-| Power | Nano-era packs | **Different** — see [Power](docs/power.md) (TBD for Super) |
-| OS image | JetBot SD image | **JetPack** on NVMe/SSD (no official JetBot Orin image) |
+| Classic JetBot hardware + Jupyter | Available | [docs/getting_started.md](docs/getting_started.md) |
+| Agentic stack (Hermes / Qwen / Cosmos / memory / ROS 2) | **M0–M1 in progress** | [docs/architecture.md](docs/architecture.md), [docs/safety.md](docs/safety.md) |
 
-Community reference for the I2C change: [NVIDIA Developer Forums — Using JetBot with Jetson Orin Nano](https://forums.developer.nvidia.com/t/using-jetbot-with-jetson-orin-nano-dev-kit/281686/8).
+> **Core rule:** LLMs never set PWM. Motion goes Hermes/Qwen → MCP → ROS 2 → `jetbot_base` (limits + watchdog) → motors.
 
-## Quick start
+## Current sprint (Milestone 0 + 1)
 
-1. **Flash Jetson** to NVMe/SSD and enable **MAXN SUPER** — see [Jetson setup](docs/jetson_setup.md).
-2. **Buy parts** — [Bill of Materials (Orin Super)](docs/bill_of_materials_orin.md).
-3. **Print chassis** — STL files in [`assets/`](assets/) — [3D printing tips](docs/3d_printing.md).
-4. **Assemble** — [Hardware setup](docs/hardware_setup.md) (same mechanical steps as JetBot; Orin carrier notes called out).
-5. **Install software** — [Software setup](docs/software_setup/orin_native.md).
-6. **Verify motors** — open `notebooks/basic_motion/basic_motion.ipynb`.
+- [x] `PROJECT_PLAN.md`, architecture + safety docs
+- [x] `scripts/diagnostics.sh`, `scripts/setup_swap.sh`
+- [x] `src/jetbot_control` motor abstraction (`mock` default, `jetbot_i2c` gated)
+- [x] `ros2_ws/src/jetbot_base` — `/cmd_vel`, velocity limits, watchdog, e-stop, status, keyboard teleop
+- [x] Unit tests for mock + controller
+- [ ] On-Jetson: ROS 2 Humble install, wheels-off-ground hardware validation
+
+**Not in this sprint:** Cosmos, Qwen, Hermes, EmbeddingGemma, MCP, Nav2, speech.
+
+## Quick start — laptop / CI (mock motors)
 
 ```bash
 git clone https://github.com/AbuAyah110/jetbot-orin-super.git
 cd jetbot-orin-super
-python3 setup.py install
+python3 -m pip install -e ".[dev]"
+python3 -m pytest tests/unit -q
+./scripts/diagnostics.sh
 ```
 
-Confirm the motor driver is visible:
+## Quick start — Jetson (after SSH)
 
 ```bash
-sudo i2cdetect -y -r 1
-# Expect 0x70 (112) for Orin-style boards, or 0x60 (96) for classic Adafruit Motor HAT wiring
+# SSH config on laptop:
+# Host jetbot
+#   HostName <JETSON_IP>
+#   User <JETSON_USERNAME>
+#   IdentityFile ~/.ssh/id_ed25519
+
+./scripts/diagnostics.sh
+# optional: sudo ./scripts/setup_swap.sh
+
+# ROS 2 Humble (once installed on Jetson):
+cd ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select jetbot_base
+source install/setup.bash
+ros2 launch jetbot_base base.launch.py backend:=mock
+# other terminal:
+ros2 run jetbot_base teleop_keyboard
 ```
 
-## Repository layout
+Keep `backend:=mock` until [docs/safety.md](docs/safety.md) and [docs/hardware_motors.md](docs/hardware_motors.md) checklist is done.
 
+## Hardware JetBot guide
+
+1. [Jetson setup (SSD + MAXN SUPER)](docs/jetson_setup.md)
+2. [Bill of Materials](docs/bill_of_materials_orin.md)
+3. [Hardware assembly](docs/hardware_setup.md)
+4. Classic package: `python3 setup.py install` then Jupyter notebooks under `notebooks/`
+
+Orin motor I2C defaults in `jetbot/`: **bus 1**, address **112 (`0x70`)**.
+
+## Milestone roadmap
+
+See [PROJECT_PLAN.md](PROJECT_PLAN.md) §35 and [docs/roadmap.md](docs/roadmap.md).
+
+```text
+M0 diagnostics → M1 ROS motors → M2 camera → M3 Cosmos → M4 memory
+→ M5–M6 MCPs → M7 Hermes → M8 Qwen → M9 voice → M10 Nav2 → …
 ```
-assets/           # STL / CAD for chassis, camera mount, caster
-docs/             # Full build + software guide (MkDocs-friendly)
-jetbot/           # Python package (Orin I2C defaults)
-notebooks/        # Basic motion, teleop, collision, road, object following
-  object_following/live_demo_nanoowl_orin.ipynb   # Community NanoOWL demo
-scripts/          # Jetson helper scripts
-docker/           # Upstream Docker assets (Nano-era; not primary path on Orin)
-```
-
-## Official upstream docs
-
-- [JetBot documentation](https://jetbot.org/master/)
-- [NVIDIA-AI-IOT/jetbot](https://github.com/NVIDIA-AI-IOT/jetbot)
-- [Orin BOM page](https://jetbot.org/master/bill_of_materials_orin.html)
-
-## Roadmap
-
-See [docs/roadmap.md](docs/roadmap.md) for the conversational stack (VLM + ASR + TTS + RAG), mic/speaker, and Super-capable power.
 
 ## License
 

@@ -1,0 +1,8 @@
+# Placeholder — memory stack starts at Milestone 4
+enabled: false
+sqlite_path: data/memory/memories.db
+hnsw_path: data/memory/index.hnsw
+embedding_dimensions: 256
+retrieval:
+  top_k: 8
+  final_context_memories: 5

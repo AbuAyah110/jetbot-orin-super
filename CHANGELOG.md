@@ -6,7 +6,7 @@
 - Motor driver defaults: I2C bus 1, address 112 (0x70); fallback to 96 / SparkFun.
 - Add Jetson SSD boot + MAXN SUPER official doc links.
 - Add power placeholder for Super-capable supply.
-- Add roadmap for mic/speaker + VLM/ASR/TTS/RAG.
-- Include community NanoOWL live demo notebook for Orin.
+- Add `PROJECT_PLAN.md` agentic architecture (Hermes / Qwen / Cosmos / memory).
+- Milestone 0–1: diagnostics, `jetbot_control` mock motors, ROS 2 `jetbot_base` (cmd_vel, watchdog, e-stop, teleop), unit tests.
 
 Upstream JetBot history: https://github.com/NVIDIA-AI-IOT/jetbot/blob/master/CHANGELOG.md

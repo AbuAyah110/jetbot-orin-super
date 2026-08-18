@@ -1,49 +1,27 @@
-# Roadmap — Conversational JetBot (Orin Nano Super)
+# Roadmap
 
-Phase 1 delivers a working **Orin Nano Super JetBot** (chassis, motors, camera, classic notebooks).
+Full plan: [`PROJECT_PLAN.md`](../PROJECT_PLAN.md).
 
-Phase 2 turns it into a robot you can **talk to**, with perception and memory on device.
+## Milestone order (do not skip)
 
-## Phase 1 — Basic JetBot on Orin Super (current)
-
-- [x] Repo fork with Orin I2C defaults (bus 1, addr 112)
-- [x] BOM / STL / hardware docs from JetBot + Orin notes
-- [x] Jetson SSD boot + MAXN SUPER links
-- [ ] Final Super-capable power BOM ([power.md](power.md))
-- [ ] Validate basic_motion + teleop on hardware
-- [ ] Validate CSI camera notebooks
-
-## Phase 2 — Audio I/O
-
-- [ ] USB or I2S **microphone** (selection + mount)
-- [ ] USB or I2S **speaker** / amp
-- [ ] Audio bring-up notes (ALSA/Pulse, latency)
-- [ ] Push-to-talk or wake-word path (TBD)
-
-## Phase 3 — On-device AI stack
-
-All intended to run on **Orin Nano Super** (TensorRT / optimized runtimes where possible):
-
-| Block | Role | Status |
+| ID | Milestone | Status |
 | --- | --- | --- |
-| **ASR** | Speech → text | Planned |
-| **VLM** | Vision + language understanding | Planned |
-| **RAG** | Small on-device retrieval over local docs/memory | Planned |
-| **TTS** | Text → speech | Planned |
-| **Orchestrator** | Dialog + motor skills + safety stops | Planned |
+| M0 | Remote development / diagnostics | In progress |
+| M1 | ROS 2 + motor control + watchdog | In progress |
+| M2 | CSI camera | Planned |
+| M3 | Cosmos Reason2-2B (llama.cpp) | Planned |
+| M4 | EmbeddingGemma + SQLite/HNSW | Planned |
+| M5 | Memory MCP | Planned |
+| M6 | Robot MCP | Planned |
+| M7 | Hermes + Cosmos | Planned |
+| M8 | Qwen3.5-0.8B executive | Planned |
+| M9 | Voice (VAD / STT / Piper TTS) | Planned |
+| M10 | Sensors + Nav2 | Planned (needs encoders/IMU/range) |
+| M11 | Web research | Planned |
+| M12 | Proactive event loop | Planned |
+| M13 | Skills / self-improvement | Planned |
+| M14 | Additional MCP servers | Planned |
 
-Community precursor already in-tree: `notebooks/object_following/live_demo_nanoowl_orin.ipynb` (NanoOWL open-vocab detection + JetBot motion).
+## Hardware guide track (parallel)
 
-## Phase 4 — Polish
-
-- [ ] One-command bring-up script
-- [ ] Thermal / power profiles for demo vs idle
-- [ ] Safety: e-stop, motor timeout, obstacle policy
-- [ ] Short demo video + workshop checklist
-
-## Design principles
-
-1. **On-device first** — no cloud required for the core demo loop.
-2. **SSD boot** — models live on NVMe.
-3. **Super when demoing AI** — document power honestly; do not ship an undersized pack.
-4. **Reuse JetBot skills** — motion, camera, teleop remain the substrate under the dialog stack.
+Classic JetBot assembly, BOM, STL, and Jupyter demos remain available under `docs/` and `notebooks/`. Power for Super mode is still TBD — [power.md](power.md).

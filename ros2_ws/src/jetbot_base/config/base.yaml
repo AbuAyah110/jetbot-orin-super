@@ -1,0 +1,21 @@
+# Packaged defaults; prefer repo-root config/robot.yaml when developing.
+limits:
+  max_linear_velocity: 0.25
+  max_angular_velocity: 1.0
+  max_wheel_velocity: 1.0
+geometry:
+  wheel_separation_m: 0.12
+watchdog:
+  cmd_vel_timeout_sec: 0.5
+control:
+  loop_hz: 20
+  backend: mock
+  i2c_bus: 1
+  i2c_address: 112
+topics:
+  cmd_vel: /cmd_vel
+  odom: /odom
+  battery_state: /battery_state
+  robot_status: /robot_status
+estop:
+  latch: true

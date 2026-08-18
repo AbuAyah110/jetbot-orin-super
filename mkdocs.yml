@@ -32,7 +32,12 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Project Plan: project_plan.md
   - Getting Started: getting_started.md
+  - Architecture: architecture.md
+  - Safety: safety.md
+  - Motor hardware notes: hardware_motors.md
+  - Roadmap: roadmap.md
   - Jetson Setup (SSD + MAXN SUPER): jetson_setup.md
   - Bill of Materials (Orin Super): bill_of_materials_orin.md
   - Power (TBD): power.md
@@ -49,7 +54,6 @@ nav:
       - Road Following: examples/road_following.md
       - Object Following: examples/object_following.md
       - Community Examples: examples/community_examples.md
-  - Roadmap (VLM / ASR / TTS / RAG): roadmap.md
   - Reference:
       - Orin I2C (bus & address): reference/i2c_orin.md
       - 3D Printing: 3d_printing.md
