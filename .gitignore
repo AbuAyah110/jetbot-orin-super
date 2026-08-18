@@ -1,0 +1,16 @@
+*.asc
+.ipynb_checkpoints
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.env
+.env.*
+*.engine
+*.onnx
+.DS_Store
+
+# MkDocs documentation
+site/

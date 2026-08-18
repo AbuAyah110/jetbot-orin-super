@@ -1,0 +1,64 @@
+site_name: JetBot Orin Super
+site_description: Build guide for NVIDIA Jetson Orin Nano Super JetBot
+theme:
+    name: "material"
+    logo: images/logo.png
+    favicon: images/favicon.png
+    font:
+      text: Inconsolata
+    palette:
+        scheme: nvgreen
+    features:
+       - navigation.expand
+
+repo_url: ""
+
+plugins:
+  - search
+use_directory_urls: false
+
+edit_uri: blob/main/docs
+markdown_extensions:
+  - pymdownx.tabbed
+  - pymdownx.keys
+  - pymdownx.snippets
+  - pymdownx.inlinehilite
+  - pymdownx.highlight:
+        use_pygments: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - attr_list
+
+nav:
+  - Home: index.md
+  - Getting Started: getting_started.md
+  - Jetson Setup (SSD + MAXN SUPER): jetson_setup.md
+  - Bill of Materials (Orin Super): bill_of_materials_orin.md
+  - Power (TBD): power.md
+  - Hardware Setup: hardware_setup.md
+  - Software Setup:
+      - Orin native (recommended): software_setup/orin_native.md
+      - Wi-Fi setup: software_setup/wifi_setup.md
+      - Upstream Docker (Nano-era, reference): software_setup/docker.md
+      - Upstream native (Nano-era): software_setup/native_setup.md
+  - Examples:
+      - Basic Motion: examples/basic_motion.md
+      - Teleoperation: examples/teleoperation.md
+      - Collision Avoidance: examples/collision_avoidance.md
+      - Road Following: examples/road_following.md
+      - Object Following: examples/object_following.md
+      - Community Examples: examples/community_examples.md
+  - Roadmap (VLM / ASR / TTS / RAG): roadmap.md
+  - Reference:
+      - Orin I2C (bus & address): reference/i2c_orin.md
+      - 3D Printing: 3d_printing.md
+      - Third Party Kits: third_party_kits.md
+      - Contributing: CONTRIBUTING.md
+      - Changes: CHANGELOG.md
+      - Docker Tips: reference/docker_tips.md
+      - Classic Nano BOM: bill_of_materials.md
+
+extra_css:
+  - css/version-select.css
+  - css/colors.css
