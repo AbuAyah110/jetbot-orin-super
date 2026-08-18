@@ -37,6 +37,7 @@ nav:
   - Architecture: architecture.md
   - Safety: safety.md
   - Motor hardware notes: hardware_motors.md
+  - Camera (Milestone 2): camera.md
   - Roadmap: roadmap.md
   - Jetson Setup (SSD + MAXN SUPER): jetson_setup.md
   - Bill of Materials (Orin Super): bill_of_materials_orin.md

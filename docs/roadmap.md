@@ -8,7 +8,7 @@ Full plan: [`PROJECT_PLAN.md`](../PROJECT_PLAN.md).
 | --- | --- | --- |
 | M0 | Remote development / diagnostics | In progress |
 | M1 | ROS 2 + motor control + watchdog | In progress |
-| M2 | CSI camera | Planned |
+| M2 | CSI camera (mock-first on laptop) | In progress |
 | M3 | Cosmos Reason2-2B (llama.cpp) | Planned |
 | M4 | EmbeddingGemma + SQLite/HNSW | Planned |
 | M5 | Memory MCP | Planned |

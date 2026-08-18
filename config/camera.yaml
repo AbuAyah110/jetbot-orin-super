@@ -1,0 +1,27 @@
+# Milestone 2 camera configuration (laptop-safe defaults)
+
+camera:
+  # fake | file | webcam | gst_csi
+  backend: fake
+  width: 320
+  height: 240
+  buffer_size: 5
+  motion_threshold: 8.0
+  moving_bar: true
+
+  # file backend
+  # path: data/images/sample.jpg
+  # loop: true
+
+  # webcam backend
+  # device_index: 0
+
+  # Jetson CSI (gst_csi) — only on Orin with Argus
+  # capture_width: 1280
+  # capture_height: 720
+  # fps: 30
+  # sensor_id: 0
+
+output:
+  directory: data/images
+  jpeg_quality: 90

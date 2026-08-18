@@ -13,16 +13,17 @@ Architectural source of truth: **[`PROJECT_PLAN.md`](PROJECT_PLAN.md)**.
 
 > **Core rule:** LLMs never set PWM. Motion goes Hermes/Qwen → MCP → ROS 2 → `jetbot_base` (limits + watchdog) → motors.
 
-## Current sprint (Milestone 0 + 1)
+## Current sprint
 
-- [x] `PROJECT_PLAN.md`, architecture + safety docs
-- [x] `scripts/diagnostics.sh`, `scripts/setup_swap.sh`
-- [x] `src/jetbot_control` motor abstraction (`mock` default, `jetbot_i2c` gated)
-- [x] `ros2_ws/src/jetbot_base` — `/cmd_vel`, velocity limits, watchdog, e-stop, status, keyboard teleop
-- [x] Unit tests for mock + controller
-- [ ] On-Jetson: ROS 2 Humble install, wheels-off-ground hardware validation
+- [x] Milestone 0–1 foundation (diagnostics, mock motors, ROS base package)
+- [x] Milestone 2 mock camera (`perception`, fake/file/webcam, change detection)
+- [ ] On-Jetson: ROS Humble + CSI `gst_csi` validation
 
-**Not in this sprint:** Cosmos, Qwen, Hermes, EmbeddingGemma, MCP, Nav2, speech.
+```bash
+PYTHONPATH=src python3 -m pytest tests/unit -q
+PYTHONPATH=src python3 scripts/demo_camera.py --backend fake --out data/images/demo.jpg
+```
+
 
 ## Quick start — laptop / CI (mock motors)
 

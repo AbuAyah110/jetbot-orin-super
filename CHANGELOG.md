@@ -8,5 +8,6 @@
 - Add power placeholder for Super-capable supply.
 - Add `PROJECT_PLAN.md` agentic architecture (Hermes / Qwen / Cosmos / memory).
 - Milestone 0–1: diagnostics, `jetbot_control` mock motors, ROS 2 `jetbot_base` (cmd_vel, watchdog, e-stop, teleop), unit tests.
+- Milestone 2 (laptop): `perception` camera service with fake/file/webcam backends, ring buffer, motion detect, CSI stub.
 
 Upstream JetBot history: https://github.com/NVIDIA-AI-IOT/jetbot/blob/master/CHANGELOG.md
