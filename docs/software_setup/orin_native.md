@@ -24,8 +24,8 @@ sudo apt-get install -y python3-pip python3-dev i2c-tools cmake
 ## Install the `jetbot` package
 
 ```bash
-git clone <this-repo-url> jetbot_orin
-cd jetbot_orin
+git clone https://github.com/AbuAyah110/jetbot-orin-super.git
+cd jetbot-orin-super
 python3 setup.py install
 # or: pip3 install -e .
 ```

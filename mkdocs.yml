@@ -11,7 +11,7 @@ theme:
     features:
        - navigation.expand
 
-repo_url: ""
+repo_url: https://github.com/AbuAyah110/jetbot-orin-super
 
 plugins:
   - search

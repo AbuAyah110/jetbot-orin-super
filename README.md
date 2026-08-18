@@ -29,8 +29,8 @@ Community reference for the I2C change: [NVIDIA Developer Forums — Using JetBo
 6. **Verify motors** — open `notebooks/basic_motion/basic_motion.ipynb`.
 
 ```bash
-git clone <this-repo-url> jetbot_orin
-cd jetbot_orin
+git clone https://github.com/AbuAyah110/jetbot-orin-super.git
+cd jetbot-orin-super
 python3 setup.py install
 ```
 
