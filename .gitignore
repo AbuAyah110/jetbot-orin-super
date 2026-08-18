@@ -17,8 +17,9 @@ build/
 .DS_Store
 
 # Runtime data (keep placeholders)
-data/**
-!data/**/.gitkeep
+/data/*
+!/data/**/
+!/data/**/.gitkeep
 
 # ROS build artifacts
 ros2_ws/build/
