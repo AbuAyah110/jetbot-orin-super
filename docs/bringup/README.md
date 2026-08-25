@@ -32,7 +32,9 @@ Lightweight re-check only — no OS reinstall, no motor PWM.
 | B | **Pass (probe)** | I2C buses present; bus 7 shows `0x70`/`0x60`/`0x3c`. PWM **not** re-run. Prior motion: `notebooks/basic_motion/basic_motion.ipynb`. |
 | C | **Pass** | `nvarguscamerasrc` 1-frame EOS; prior live preview: `notebooks/camera/csi_camera_test.ipynb`. |
 | D | **Audio HW verified** | Waveshare SSS1629. Identify by ALSA **name**, never card index. Sidetone **off**. Sequential capture then playback until F2 AEC. |
-| E–G | Not this check | Skeleton / voice models / TensorRT dummy I/O still ahead. |
+| E | **Pass** | `.venv` via `virtualenv` (no `python3-venv` apt). PyYAML 6.0.3. `test_python_skeleton.sh` ok. |
+| F | **F1+F2 pass** | F1 name-resolved ALSA mixer; F2 `pywebrtc-audio` offline NS 8.2× / AEC 236×. F4/F5 models not installed. |
+| G | Open | TensorRT dummy I/O |
 | H | Not started | Split into I1–I8; starts after G (tools that need F/G wait on those gates). |
 | I | After H | Memory stores after the agent loop skeleton exists. |
 

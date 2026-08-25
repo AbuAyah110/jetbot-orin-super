@@ -29,6 +29,20 @@ Create or retain versioned test metadata for clean-speech, noisy-speech, and spe
 
 Pass: all three fixtures process without frame discontinuities; speech remains intelligible; measured noise and playback echo are reduced relative to the unprocessed fixtures; no clipping or feedback occurs; resource and latency measurements are recorded.
 
+### Probe 2026-08-25 (offline, no speaker)
+
+Package: `pywebrtc-audio==0.1.0` + `numpy==2.2.6` in `.venv`. Gate: `./scripts/bringup/test_webrtc_apm.sh`. Artifacts under `data/audio/f2/` (gitignored).
+
+| Fixture | Result |
+| --- | --- |
+| Noise-only (NS, AGC off) | RMS 0.200 → 0.024 (**8.2×** reduction) |
+| Echo-only (AEC, AGC off, far-end reference) | RMS 0.140 → 0.00059 (**236×** reduction) |
+| Clean speech (full APM) | RMS 0.192 → 0.465 (AGC), peak 0.97, not clipped; speech_probability 0.90 |
+| Real-time factor | 0.005–0.016 (faster than real time) |
+| Live duplex | **Not** run. Sequential ALSA still required until F6. |
+
+Live capture/playback was not repeated in the sandbox; F1 ALSA identity/mixer from earlier this session still applies.
+
 ## F3 — Optional RNNoise A/B benchmark
 
 RNNoise is optional residual denoising after APM. It does **not** cancel acoustic echo and does not replace F2. RNNoise expects 48 kHz audio and fixed 480-sample (10 ms) frames, so a 16 kHz capture pipeline needs resampling around it. Benchmark APM alone against APM + RNNoise using identical fixtures.

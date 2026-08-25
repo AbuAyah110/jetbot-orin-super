@@ -68,12 +68,18 @@ Hardware: Waveshare / Solid State System USB PnP Audio **SSS1629**. Identify the
 | --- | --- |
 | venv + `jetbot_agent` imports | `./scripts/bringup/test_python_skeleton.sh` |
 
+Pass 2026-08-25: `.venv` created with `virtualenv` (`python3-venv` apt not present). PyYAML 6.0.3. Import smoke ok. See [docs/bringup/05-python-skeleton.md](docs/bringup/05-python-skeleton.md).
+
 ## Stage F — Voice
 
 | Exact issue title | Verify |
 | --- | --- |
 | F1: Identify SSS1629 ALSA device and establish safe mixer baseline | Name-resolved 16 kHz mono capture, then separate low-volume playback; sidetone off |
 | F2: Validate WebRTC APM acoustic echo and noise front end | Clean/noisy/echo fixtures show speech preservation plus measured noise/echo reduction |
+
+F1 pass 2026-08-25: `plughw:CARD=Device,DEV=0` (Solid State System USB PnP); sidetone off; capture 80%; speaker 20%. See [docs/bringup/04-audio.md](docs/bringup/04-audio.md).
+
+F2 pass 2026-08-25: `pywebrtc-audio==0.1.0` offline fixtures; NS 8.2×; AEC 236×; no live duplex. See [docs/bringup/06-voice.md](docs/bringup/06-voice.md).
 | F3: Benchmark optional RNNoise residual denoising | Reproducible APM-only vs APM+RNNoise 48 kHz/resampling A/B report |
 | F4: Validate NVIDIA FastConformer ASR on Orin | One WAV → transcript; latency, real-time factor, utilization, and peak RAM/VRAM recorded |
 | F5: Validate NVIDIA FastPitch and HiFi-GAN TTS on Orin | Text → mel → WAV → safe one-shot playback; latency, real-time factor, utilization, and peak RAM/VRAM recorded |

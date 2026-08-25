@@ -1,0 +1,9 @@
+# Stage E+ — keep this list tiny until each install is verified.
+PyYAML>=6.0
+
+# Stage F2 — verified 2026-08-25 on Orin aarch64 (offline fixtures).
+numpy>=2.0,<3
+pywebrtc-audio==0.1.0
+
+# FastConformer / FastPitch+HiFi-GAN runtimes are not pinned yet (F4/F5).
+# RNNoise remains an optional F3 benchmark dependency.

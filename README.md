@@ -25,8 +25,9 @@ Staged **install-and-test** on this Orin (one gate at a time): **[`TASKBOARD.md`
 - [x] Stage B I2C probe (bus 7: `0x70`/`0x60`/`0x3c`; no PWM this pass; prior `notebooks/basic_motion`)
 - [x] Stage C CSI (Argus 1-frame + `notebooks/camera/csi_camera_test.ipynb`)
 - [x] Stage D audio HW (Waveshare SSS1629; ALSA **name** not card index; sidetone **off**)
-- [ ] Stage E Python skeleton
-- [ ] Stage F voice: WebRTC APM → FastConformer ASR + FastPitch/HiFi-GAN TTS → guarded duplex (optional RNNoise)
+- [x] Stage E Python skeleton (`.venv` via `virtualenv`; PyYAML 6.0.3; import smoke pass)
+- [x] Stage F2 WebRTC APM (`pywebrtc-audio` 0.1.0; offline NS/AEC fixtures; no live duplex)
+- [ ] Stage F4/F5 FastConformer ASR + FastPitch/HiFi-GAN TTS (optional F3 RNNoise; F6 duplex after AEC+ASR+TTS)
 - [ ] Stage G TensorRT dummy engines
 - [ ] Stage H agent I1–I8 (harness, safe tools, vision, Tavily, nav dummy, voice, VLM, `main.py`)
 - [ ] Stage I memory (after agent); memory tools after that

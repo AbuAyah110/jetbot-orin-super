@@ -31,6 +31,10 @@ build/
 !/data/maps/.gitkeep
 /data/benchmarks/**
 !/data/benchmarks/.gitkeep
+/data/audio/**
+!/data/audio/.gitkeep
+/data/bringup/**
+!/data/bringup/.gitkeep
 
 # ROS build artifacts
 ros2_ws/build/
@@ -39,3 +43,12 @@ ros2_ws/log/
 
 # MkDocs documentation
 site/
+
+# Local Python env and CMake junk
+.venv/
+venv/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+**/CMakeFiles/
+**/cmake_install.cmake

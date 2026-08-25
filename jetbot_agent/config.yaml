@@ -1,0 +1,57 @@
+# Placeholders for staged bring-up. Tune after hardware probes.
+
+system:
+  name: jetbot_orin_super
+  swapfile: /ssd/32GB.swap
+  swappiness: 60
+
+motors:
+  i2c_device: /dev/i2c-7
+  i2c_address: 0x70
+  # Probe 2026-08-25: bus 7 has 0x70/0x60/0x3c; bus 1 has UU at 0x40 and 0x25.
+  discovered_bus: 7
+  discovered_address: 0x70
+
+camera:
+  sensor: imx219
+  csi_port: 0
+
+audio:
+  sample_rate_hz: 16000
+  channels: 1
+  frame_ms: 10
+  # Resolve the SSS1629 by ALSA USB device name; never persist a card index.
+  alsa_usb_name: "Solid State System Co.,Ltd. USB PnP Audio Device"
+  alsa_id: Device
+  alsa_capture: "plughw:CARD=Device,DEV=0"
+  alsa_playback: "plughw:CARD=Device,DEV=0"
+  capture_percent_baseline: 80
+  playback_percent_baseline: 20
+  sidetone_enabled: false
+  sequential_io_only_until_aec_passes: true
+  mixer_state: config/alsa-sss1629.state
+  preprocessor:
+    backend: webrtc_apm
+    high_pass_filter: true
+    noise_suppression: true
+    automatic_gain_control: true
+    voice_activity_detection: true
+    acoustic_echo_cancellation: true
+    far_end_reference_required: true
+    rnnoise_enabled: false
+  asr:
+    backend: nvidia_fastconformer
+    model: null
+    runtime: null
+  tts:
+    acoustic_model: nvidia_fastpitch
+    vocoder: nvidia_hifigan
+    runtime: null
+
+memory:
+  chroma_path: data/memory/chroma
+  facts_db: data/memory/facts.db
+
+thresholds:
+  cmd_vel_timeout_sec: 0.5
+  max_linear_velocity: 0.25

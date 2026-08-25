@@ -31,6 +31,18 @@ The device was `plughw:2,0` during bring-up, but ALSA card indices change across
 
 Pass: a short 16 kHz mono WAV is recorded, capture is stopped, and the file is played once at low volume. Confirm the microphone is not silent, the recording is not clipped, sidetone is off, and the evidence records the USB device name and current resolved ALSA endpoint.
 
-## Status
+## Probe 2026-08-25 (F1)
 
-Audio **hardware** was verified during Stage D bring-up with the safety notes above. Software voice (Stage F) is FastConformer ASR, FastPitch + HiFi-GAN TTS, WebRTC APM, and optional RNNoise. Agent voice tools are ticket **I6** and wait on F4/F5 (one-shot) or F6 (duplex).
+Resolved by name, not card index:
+
+| Field | Value |
+| --- | --- |
+| USB name | Solid State System Co.,Ltd. USB PnP Audio Device (`0c76:1203`) |
+| ALSA id | `Device` (ephemeral index was 2 this boot) |
+| Capture/playback | `plughw:CARD=Device,DEV=0` |
+| Speaker | 20% (−50.38 dB), unmuted for one-shot play |
+| Mic capture | 80% (+24.81 dB), on |
+| Mic playback / sidetone | 0%, **off** |
+| Mixer persist | `config/alsa-sss1629.state` (`alsactl --file … store`) |
+
+Sequential 1 s 16 kHz mono capture then playback: `peak=0.025` `rms=0.0010`, not clipped. Restore with `alsactl --file config/alsa-sss1629.state restore <card>` after resolving the card by name.
