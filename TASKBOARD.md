@@ -1,6 +1,6 @@
 # Task board — JetBot Orin Super staged bring-up
 
-GitHub Project: **(URL filled after `gh project create`)**
+GitHub Project (v2): **not created** — the `gh` token is missing the `project` and `read:project` scopes. Run `gh auth refresh -s project,read:project` to enable it. Tracking currently runs on milestones + labels: [milestones](https://github.com/AbuAyah110/jetbot-orin-super/milestones) · [issues](https://github.com/AbuAyah110/jetbot-orin-super/issues)
 
 Repo: [AbuAyah110/jetbot-orin-super](https://github.com/AbuAyah110/jetbot-orin-super)
 
@@ -8,7 +8,7 @@ Each row is one issue. Close the issue only when the **Verify** command passes o
 
 Spec: [JETBOT_SPEC.md](JETBOT_SPEC.md) · Procedures: [docs/bringup/README.md](docs/bringup/README.md)
 
-**Sequence:** A → B → C → D → E → F → G → **H Agent (I1–I8)** → **I Memory**. Agent integration is before memory. I1–I8 are integration tickets (Stage H), not Stage I. `gh` is not installed on this Jetson; this file is the issue source of truth until a GitHub Project exists.
+**Sequence:** A → B → C → D → E → F → G → **H Agent (I1–I8)** → **I Memory**. Agent integration is before memory. I1–I8 are integration tickets (Stage H), not Stage I. Every ticket below now has a GitHub issue (one milestone per stage); this file stays the narrative source of truth.
 
 ## Status snapshot (2026-08-25)
 
