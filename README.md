@@ -2,7 +2,7 @@
 
 Hardware build guide **and** agentic AI robotics stack for **NVIDIA Jetson Orin Nano Super 8GB**.
 
-Architectural source of truth: **[`PROJECT_PLAN.md`](PROJECT_PLAN.md)**.
+Target hardware/agent tree: **[`JETBOT_SPEC.md`](JETBOT_SPEC.md)**. Historical ROS/Cosmos plan: **[`PROJECT_PLAN.md`](PROJECT_PLAN.md)**.
 
 ## Two layers in one repo
 
@@ -15,11 +15,24 @@ Architectural source of truth: **[`PROJECT_PLAN.md`](PROJECT_PLAN.md)**.
 
 ## Current sprint
 
+Staged **install-and-test** on this Orin (one gate at a time): **[`TASKBOARD.md`](TASKBOARD.md)** · **[`docs/bringup/README.md`](docs/bringup/README.md)**.
+
+**Order:** A → B → C → D → E → F → G → **H agent (I1–I8)** → **I memory**. Agent is before memory.
+
 - [x] Milestone 0–1 foundation (diagnostics, mock motors, ROS base package)
 - [x] Milestone 2 mock camera (`perception`, fake/file/webcam, change detection)
-- [ ] On-Jetson: ROS Humble + CSI `gst_csi` validation
+- [x] Stage A OS (2026-08-25 re-check: L4T R36.4.4, NVMe `/`, MAXN_SUPER, headless; swap is `/ssd/32GB.swap` 32 GiB, swappiness 60)
+- [x] Stage B I2C probe (bus 7: `0x70`/`0x60`/`0x3c`; no PWM this pass; prior `notebooks/basic_motion`)
+- [x] Stage C CSI (Argus 1-frame + `notebooks/camera/csi_camera_test.ipynb`)
+- [x] Stage D audio HW (Waveshare SSS1629; ALSA **name** not card index; sidetone **off**)
+- [ ] Stage E Python skeleton
+- [ ] Stage F voice: WebRTC APM → FastConformer ASR + FastPitch/HiFi-GAN TTS → guarded duplex (optional RNNoise)
+- [ ] Stage G TensorRT dummy engines
+- [ ] Stage H agent I1–I8 (harness, safe tools, vision, Tavily, nav dummy, voice, VLM, `main.py`)
+- [ ] Stage I memory (after agent); memory tools after that
 
 ```bash
+./scripts/diagnostics.sh
 PYTHONPATH=src python3 -m pytest tests/unit -q
 PYTHONPATH=src python3 scripts/demo_camera.py --backend fake --out data/images/demo.jpg
 ```

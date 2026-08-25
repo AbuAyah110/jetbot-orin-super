@@ -2,6 +2,8 @@
 
 Full plan: [`PROJECT_PLAN.md`](../PROJECT_PLAN.md).
 
+**Live Jetson install order** is [`docs/bringup/README.md`](bringup/README.md): A–G, then **agent integration (Stage H / I1–I8) before memory (Stage I)**. The M0–M14 table below is the historical `PROJECT_PLAN` sequence and is **not** the current bring-up queue (that plan put memory MCP before Hermes).
+
 ## Milestone order (do not skip)
 
 | ID | Milestone | Status |
@@ -15,7 +17,7 @@ Full plan: [`PROJECT_PLAN.md`](../PROJECT_PLAN.md).
 | M6 | Robot MCP | Planned |
 | M7 | Hermes + Cosmos | Planned |
 | M8 | Qwen3.5-0.8B executive | Planned |
-| M9 | Voice (VAD / STT / Piper TTS) | Planned |
+| M9 | Voice (WebRTC APM / FastConformer / FastPitch + HiFi-GAN) | Planned |
 | M10 | Sensors + Nav2 | Planned (needs encoders/IMU/range) |
 | M11 | Web research | Planned |
 | M12 | Proactive event loop | Planned |
