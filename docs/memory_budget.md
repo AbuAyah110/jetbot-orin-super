@@ -212,6 +212,132 @@ has the numbers behind it.
 Both voice models grow with input/output length and nothing else: ASR 325 → 466 MiB from 6.6 s to
 16.7 s, TTS 163 → 175 MiB from 2.8 s to 6.4 s. Capping length is a hard cap on those lines.
 
+## User-supplied quantized checkpoints (2026-08-26)
+
+Two Hugging Face repos were offered as a rebuttal to the all-resident verdict.
+Both are **real published checkpoints**. Neither moves the verdict on this
+board. The Hub file sizes were taken from the Hub tree API (LFS `size` fields);
+the weights were **not** downloaded.
+
+### 1. `Azaz666/Qwen2.5-VL-3B-Instruct-AWQ-INT4`
+
+| Field | Value |
+| --- | --- |
+| Repo | https://huggingface.co/Azaz666/Qwen2.5-VL-3B-Instruct-AWQ-INT4 |
+| Pinned revision | `a945acad73cf25d1c84bb4b8a79923aa7ecff876` (tree the user linked) |
+| Publisher | Community (`Azaz666`), not Qwen and not NVIDIA |
+| License | Apache-2.0 |
+| Declared runtime | **AutoAWQ** (`library_name: autoawq`, `quant_method: awq`, `version: gemm`) |
+| `model.safetensors` | **3,401,801,720 B = 3244 MiB** |
+| Hub dtype mix | 2,774,532,096 I32-packed 4-bit params + **980,090,880 F16 params** |
+
+`config.json` at that SHA: `hidden_size` 2048, `num_hidden_layers` 36,
+`num_key_value_heads` 2, vision tower present (`vision_config.depth` 32,
+`hidden_size` 1280). Quantization is AWQ INT4, **group size 128**, zero-point
+true. **`modules_to_not_convert: ["visual"]` — the vision encoder is left FP16.**
+That is why a "3B INT4" file is 3.17 GiB rather than ~1.8 GiB: roughly 1.87 GiB
+of the file is still F16.
+
+The card's own Jetson note (README on `main`; not present at the pinned SHA) is
+explicit: AutoAWQ CUDA/Triton kernels **are not available on Jetson aarch64**,
+and the author points at a different INT8 method for this board. Measured GPU
+memory on an A6000 for this checkpoint is **3334 MB** — already most of this
+board's 5.2 GiB model budget, on a machine that has discrete VRAM.
+
+**Can it load here?**
+
+| Runtime | Loadable on Orin Nano Super SM 87? |
+| --- | --- |
+| AutoAWQ / Triton GEMM / transformers-with-AutoAWQ | **No.** Publisher says so; aarch64 Jetson lacks those kernels. |
+| llama.cpp | **No, not this file.** This is AutoAWQ safetensors, not GGUF. |
+| TensorRT-Edge-LLM | **Not this repo.** Edge-LLM **does** ingest AutoAWQ packing (`quant_method == awq` → `QUANT_INT4_AWQ`, `repack_awq_to_plugin`) and lists **`Qwen/Qwen2.5-VL-3B-Instruct-AWQ`** as a supported pre-quantized checkpoint. It does **not** list `Azaz666/...`. Official Qwen AWQ `model.safetensors` is 3,401,785,760 B (16 KB smaller) — same weight class, still includes an FP16 visual. Orin is **Compatible** on JetPack 6.2+ / CUDA 12.6 for **FP16, INT8, INT4 only**; engines **build on device**. An unlisted community export is not a supported input. Even the official AWQ still has to be exported and built; that path has never been run on this host. |
+
+INT4 groupwise GEMM existing in Edge-LLM ≠ this safetensors repo is a drop-in
+engine. Weights-on-disk also ≠ resident footprint: KV cache, TRT runtime, and
+activations remain separate line items (still unmeasured for a 3B VLM).
+
+### 2. `nvidia/llama-nemotron-embed-vl-1b-v2-fp8`
+
+| Field | Value |
+| --- | --- |
+| Repo | https://huggingface.co/nvidia/llama-nemotron-embed-vl-1b-v2-fp8 |
+| Revision SHA | `b4751b329b7d797cb6abfe018e8bedf1051a80aa` (current `main`, 2026-08-26) |
+| Publisher | **NVIDIA** |
+| License | NVIDIA Open Model License + Llama 3.2 Community |
+| Declared runtime | **vLLM** + sentence-transformers; quantized with **TensorRT Model Optimizer 0.42.0** |
+| `model.safetensors` | **2,383,531,336 B = 2273 MiB** |
+| Hub dtype mix | 973,078,528 F8_E4M3 + **705,173,952 BF16** |
+| Parent BF16 file | `nvidia/llama-nemotron-embed-vl-1b-v2` `model.safetensors` = 3,356,585,352 B = **3201 MiB** |
+
+Architecture: Eagle VLM, Llama 3.2 1B + SigLip2 400M, **~1.7B params** (unchanged).
+`hf_quant_config.json`: `quant_algo: FP8`, **exclude** `mlp1*`, `vision_model*`,
+`language_model.lm_head*` — the vision tower stays BF16. This is W8A8 ModelOpt
+FP8, not INT8.
+
+Card hardware line, verbatim: **Supported Hardware Microarchitecture
+Compatibility: NVIDIA Blackwell, NVIDIA Hopper, NVIDIA Lovelace.** Test
+hardware: **H100 SXM**. Lovelace is Ada (SM 89). Orin Nano is **Ampere SM 87**.
+That list does not include Ampere or Jetson.
+
+**Can it load here?**
+
+| Runtime | Loadable on Orin Nano Super SM 87? |
+| --- | --- |
+| TensorRT-Edge-LLM FP8 engine | **No.** Support matrix: *"Jetson Orin does not run FP8 or FP4 model engines."* Precision constraint on this JetPack 6.2.1 stack: FP16, INT8, INT4 only. The embedder is also **absent** from Edge-LLM's supported-models list. |
+| NIM / vLLM FP8 | **No on this board.** Card targets Hopper / Blackwell / Lovelace. |
+| PyTorch eager FP8 | **Not as an FP8 GEMM.** SM 87 has no native FP8 Tensor Cores (those are SM 89 Ada and SM 90 Hopper). A hypothetical eager path would dequantize to BF16/FP16 for matmul; it would not deliver an FP8-engine memory win, and torch is still absent (G1a). |
+
+Smaller than the 3201 MiB BF16 parent, yes. Executable on this SoC as FP8, no.
+
+### Recalculated line items (weights vs resident)
+
+Previous estimates are **not** replaced; they stay the baseline. These Hub sizes
+are an alternate **weight** column only.
+
+| Line | Original claim | Previous correction | These checkpoints (Hub file) | Still unmeasured on top |
+| --- | --- | --- | --- | --- |
+| VLM | 1.80 GiB INT4 AWQ | 3.41–3.95 GiB Q4 GGUF + F16 mmproj + KV | **3244 MiB** AWQ safetensors (INT4 text + FP16 visual in one file) | KV (72/144/288 MiB) + Edge-LLM/llama.cpp runtime + activations. A6000 card reports 3334 MB for the VLM alone. |
+| Embedder | 0.45 GiB INT8 | 1.66 GiB INT8 (aspirational) / 3.32 GiB FP16 | **2273 MiB** FP8+BF16 file; **cannot execute FP8 here** | PyTorch/vLLM/TRT context; activations. If forced through a dequant path, expect closer to the 3201 MiB BF16 parent plus runtime. |
+
+KV cache formula is unchanged: Qwen2.5-VL-3B still 36 KiB/token.
+
+### Do they fit all-resident?
+
+**No. They do not reverse the verdict. They only change how the overrun is
+composed, and the FP8 embedder is not a legal tenant on this GPU.**
+
+Arithmetic on **Hub weight files alone** (no KV, no TRT/PyTorch, no voice):
+
+| Set | MiB | vs 5351–5377 MiB model budget |
+| --- | --- | --- |
+| AWQ VLM weights only | 3244 | Fits, leaves ~2.1 GiB |
+| FP8 embedder weights only | 2273 | Fits, leaves ~3.1 GiB — **but will not run** |
+| **AWQ VLM + FP8 embedder weights** | **5517** | **Already 140–166 MiB over the model budget** |
+| Those two + measured voice (520–673) | 6037–6190 | Over by ~0.7–0.8 GiB |
+| Spec-shaped: those two + voice + `smolvla` 900 + one GPU runtime 600–1000 + KV@4096 244–594 | **7781–9284** | **Over by 2.4–3.9 GiB vs the 5.2 GiB budget** (9957–11286 previously) |
+
+The two user files **by themselves** exceed the model budget. Adding the
+measured voice stack and the derived VLA weights only widens the gap. Treating
+the FP8 embedder as "not present because it cannot execute" still leaves the
+INT4 VLM at 3244 MiB of weights — the same order as the llama.cpp Q4+mmproj
+estimate — so the co-residency tables in the previous sections do not flip to
+"fits."
+
+What these checkpoints **do** establish:
+
+1. The original 1.80 GiB VLM claim ignored an FP16 vision tower that both
+   AutoAWQ and official Qwen AWQ leave unquantized.
+2. The original 0.45 GiB embedder claim is still wrong even after NVIDIA's own
+   FP8 export: 2273 MiB on disk, vision still BF16, and the format is illegal on
+   SM 87 / Edge-LLM.
+3. Relative to the **previous correction**, the AWQ file is not a savings versus
+   Q4+mmproj (~3.2 GiB weights either way). The FP8 embedder is smaller than
+   the 3201 MiB BF16 parent (~928 MiB) but **larger** than the aspirational INT8
+   1700 MiB line, and it cannot be loaded.
+
+Until G2/G4 actually load a legal checkpoint on this board, runtime overhead
+stays estimated.
+
 ## What is still unmeasured
 
 **The two largest line items in this budget have never been loaded on this board.** Closing that is
