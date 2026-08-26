@@ -1,0 +1,248 @@
+# Memory budget — Jetson Orin Nano Super, 8 GB unified
+
+Authoritative footprint accounting for the JetBot stack on this board, assembled 2026-08-26 from
+the bring-up gates that have actually run. It replaces the working estimate of
+"~4.15 GB active footprint / 5.2 GB, ~1.05 GB LPDDR5 free."
+
+Interactive companion (toggle components, see headroom):
+`~/.cursor/projects/home-impulse110-Documents/canvases/jetbot-memory-budget.canvas.tsx`.
+
+## Verdict
+
+**The stack as specified does not fit all-resident on 8 GB, and the shortfall is larger than a
+first-pass review of ~1.5 GB suggested.**
+
+| | Value |
+| --- | --- |
+| Claimed footprint for the six named subsystems | 4250 MiB (4.15 GiB) |
+| Corrected footprint for the same six subsystems | **7182–10285 MiB (7.01–10.04 GiB)** |
+| Understatement | **2.86–5.89 GiB** |
+| Real model budget (pool minus measured OS baseline) | 5351–5377 MiB (5.22–5.25 GiB) |
+| Overrun | **1.76–4.82 GiB** |
+
+The **ceiling** in the original estimate is sound and deserves credit: 7620 MiB total minus a
+measured 2243–2269 MiB OS baseline really does leave about 5.2 GiB for models. What fills that
+ceiling is what is wrong. Even the optimistic end of the corrected range — INT8 embedder, low
+PyTorch overhead, ROS 2 not installed — overruns the budget by 1.76 GiB, so the verdict does not
+depend on resolving the uncertainty in the estimates.
+
+## How to read the numbers
+
+Every figure carries a basis:
+
+- **Measured** — a number this board produced, from a gate whose artifact exists. Trustworthy to a
+  few MiB.
+- **Derived** — arithmetic on a published, verified fact (parameter count, layer count). No
+  measurement, but no guesswork either.
+- **Estimated** — an informed guess. Everything over 1.5 GiB in this budget is in this category,
+  and that is the honest shape of the uncertainty: **the two largest line items are the two least
+  measured.**
+
+Units are **MiB (1024²)** throughout, matching `tegrastats` and `/proc/meminfo`. The original
+table's "GB" are read as GiB.
+
+## The pool
+
+| Metric | Value | Source |
+| --- | --- | --- |
+| `MemTotal` | 7802736 kB (~7.44 GiB) | `/proc/meminfo` |
+| `tegrastats` RAM total | 7620 MB | G1 ([07-tensorrt-g1.md](bringup/07-tensorrt-g1.md)) |
+| `cudaMemGetInfo` total | 7990 MB | G1 |
+| Swap | 32 GiB at `/ssd/32GB.swap`, `vm.swappiness=60`, **0 B used through every gate** | G1, F4, F5, [01-os.md](bringup/01-os.md) |
+
+The 7620 / 7990 spread is carveout. **7620 MiB is used as the pool throughout this document**
+because it is the conservative figure and the one `tegrastats` reports during a run.
+
+Orin Nano has **no discrete VRAM**. CPU and GPU share these pages, so "free GPU memory" is not a
+separate quantity and a CPU-only model competes with a GPU model for the same bytes. Both voice
+models are CPU-only — no JetPack 6 `onnxruntime-gpu` wheel is reachable (F4/F5 open items, G1
+§onnxruntime) — and they still consume the same pool.
+
+### OS baseline: 2243–2269 MiB, measured
+
+`tegrastats` reported `RAM 2243/7620MB` during F5 and `RAM 2269/7620MB` during F4
+([06-voice.md](bringup/06-voice.md)). This baseline **already includes `nvargus-daemon`**, which is
+an always-active systemd service and was measured live at **185852 kB RSS (181 MiB)** on
+2026-08-26 with the camera stack up.
+
+G1 recorded a higher `RAM 2824/7620MB` sample, but that was taken during engine-build activity
+rather than at idle, so the F4/F5 figures are the ones used here.
+
+`MemAvailable` runs ~1 GB below `MemTotal - tegrastats RAM` because the kernel conservatively
+discounts cache it is unsure it can reclaim (G1 §Memory headroom). Both are recorded; neither is
+silently preferred.
+
+**Model budget = 7620 − 2269 … 7620 − 2243 = 5351–5377 MiB.**
+
+## Measured line items
+
+These are the only figures in this budget that carry hard evidence.
+
+| Line item | Footprint | Gate | Notes |
+| --- | --- | --- | --- |
+| ASR — FastConformer CTC, INT8 ONNX via `sherpa-onnx`, **CPU** | **325–466 MiB** peak RSS | **F4**, `data/bringup/f4_fastconformer_asr.json` | 325.8 MiB at 1 thread and 324.5 MiB at 2 threads for a 6.63 s utterance; **466.5 MiB** for 16.72 s. Weights are constant, so growth is activation and feature buffers proportional to utterance length — **capping utterance length caps this line.** `MemAvailable` floor 3.86 GiB, swap untouched. |
+| TTS — Matcha-TTS + HiFi-GAN **v2**, **CPU** | **163–175 MiB** peak RSS | **F5**, `data/bringup/f5_matcha_hifigan_tts.json` | 162.9 MiB for 2.81 s of audio, 174.9 MiB for 6.40 s. `MemAvailable` floor 5096 MiB, swap untouched. **HiFi-GAN v1 costs 240.6 MiB and is unusable anyway** at RTF 1.237. |
+| TensorRT engine build, **transient** | **1491 MiB** peak RSS | **G1**, `data/bringup/g1_runtime.json` | For a **68 KB** ONNX graph. `libnvinfer_builder_resource.so` alone is 152 MB and the tactic search is not free. `cudaMemGetInfo` free moved 4882 → 4012 MB across the run. Engine builds happen on-device per NVIDIA's support matrix. |
+| `nvargus-daemon` resident | **181 MiB** | live `ps` 2026-08-26 | Inside the OS baseline above; **do not charge it twice.** |
+| Agent harness process | **32 MiB** | measured for this document | RSS after importing `jetbot_agent`, `numpy`, PyYAML and `sherpa_onnx`, before any model loads. The one omission from the original table that genuinely does not matter. |
+
+The **`trtexec` RSS rows in `g1_runtime.json` (~43 MB) are an artifact** and are deliberately not
+used here — that run sampled the wrapper process, not the `trtexec` child. The 1491 MiB figure
+comes from the Python API path, which was sampled correctly. See the caveat in
+[07-tensorrt-g1.md](bringup/07-tensorrt-g1.md).
+
+Voice total, both models plus the harness: **520–673 MiB.**
+
+## Derived line items
+
+| Line item | Footprint | Basis |
+| --- | --- | --- |
+| VLA policy — `lerobot/smolvla_base` BF16 weights | **900 MiB** | ~450M params × 2 B, per G1 §G3. |
+| Embedder — `nvidia/llama-nemotron-embed-vl-1b-v2` | **1700 MiB** INT8 / **3400 MiB** FP16 | **~1.7B params, not 1B** (Llama 3.2 1B + SigLip2 400M), per G1 §G4. |
+| VLM KV cache | **72 MiB** @ 2048 tok · **144 MiB** @ 4096 · **288 MiB** @ 8192 | Qwen2.5-VL-3B: 2 (K,V) × 36 layers × 2 KV heads × 128 head_dim × 2 B = **36 KiB/token**. |
+
+## Estimated line items
+
+| Line item | Footprint | Why it is only an estimate |
+| --- | --- | --- |
+| VLM text backbone — Qwen2.5-VL-3B Q4_K_M GGUF | **2000–2200 MiB** | G1's feasibility analysis. **No llama.cpp binary exists on this host and no GGUF has been fetched**; nothing has been loaded on-device. |
+| VLM vision tower — F16 `mmproj` | **1250 MiB** | Same. Mandatory: the vision tower **cannot be quantized to INT4 without visible degradation**, so this is a fixed cost whenever vision is resident. |
+| llama.cpp compute buffers | **100–450 MiB** on top of KV | Depends on batch and image token count, neither of which has been exercised here. |
+| PyTorch + CUDA context + cuDNN/cuBLAS kernel libraries | **600–1000 MiB**, charged **once per GPU process** | **PyTorch is not installed at all** (ticket G1a). Anchored on the one hard datapoint available: a TensorRT process needed 1491 MiB to build a 68 KB graph, so GPU framework overhead on this board is measured in hundreds of MiB, not tens. `smolvla` and the embedder can share one process; two processes pay it twice. |
+| Chroma HNSW index + SQLite | **200–400 MiB** | Stage I memory stores are not built and no gate has run. A placeholder that must be measured. |
+| ROS 2 + Isaac ROS graph | **0 or 300 MiB** | **ROS 2 is not installed on this board.** The 300 MiB is the spec's own guess, carried forward unverified. |
+
+## Verdict on the proposed table, row by row
+
+| Subsystem | Claimed | Corrected | Delta | Assessment |
+| --- | --- | --- | --- | --- |
+| High-Level VLM — Qwen2.5-VL-3B INT4 AWQ | 1.80 GiB | **3.41–3.95 GiB** | **+1.61 … +2.15** | **Wrong, and the runtime named cannot exist here.** INT4 AWQ will not load: AWQ checkpoints need AutoAWQ GEMM/Triton kernels unavailable on Jetson aarch64, and there is no Tegra TensorRT-LLM wheel (G1 §G2). The decided path is llama.cpp + GGUF, which costs a ~2.0–2.2 GB Q4 backbone **plus a mandatory ~1.25 GB F16 `mmproj`** plus KV and compute buffers. |
+| Reactive Motor VLA — `smolvla-jetbot` FP16/INT8 | 1.20 GiB | **1.46–1.86 GiB** | **+0.26 … +0.66** | **Model name is fictitious; the number is close for the wrong reason.** The `smolvla-jetbot` fine-tune **does not exist** — only `lerobot/smolvla_base` does, at ~0.88 GiB BF16, so the weights claim is actually generous. What is missing is the PyTorch and CUDA runtime wrapped around them. |
+| Multimodal RAG — `llama-nemotron-embed` INT8 | 0.45 GiB | **1.66–3.32 GiB** | **+1.21 … +2.87** | **The largest single error in the table.** The model is ~1.7B params, not 1B. It ships FP16 safetensors with **no on-device quantization path** (no `modelopt`, no verified Tegra `bitsandbytes`), so even the 1.66 GiB INT8 figure is aspirational and 3.32 GiB FP16 is the realistic number. |
+| ASR — FastConformer CTC FP16 | 0.25 GiB | **0.32–0.46 GiB** | **+0.07 … +0.21** | **Sound in magnitude — the best row in the table.** Wrong on details: it runs INT8 on **CPU**, not FP16 on GPU. Use 0.32 GiB with a 0.46 GiB cap for long utterances, and cap utterance length to hold the cap. |
+| TTS — FastPitch + HiFi-GAN mixed | 0.15 GiB | **0.16–0.17 GiB** | **+0.01 … +0.02** | **The number is right.** The model is not: **FastPitch was a measured dead end** — no ONNX or TensorRT plan exists on NGC and `nemo_toolkit[tts]` resolves to 161 packages / 3.37 GB of the wrong CUDA generation (F5). The shipped path is **Matcha-TTS + HiFi-GAN v2**. |
+| ROS 2 Middleware — Isaac ROS Argus zero-copy | 0.30 GiB | **0 … 0.29 GiB** | **−0.30 … −0.01** | **Should not be charged as written.** ROS 2 is not installed, so the figure is speculative. The real camera cost is `nvargus-daemon` at 181 MiB, and that is **already inside the measured OS baseline** — charging 0.30 GiB on top double-counts it. |
+
+## Line items the table omits entirely
+
+Together these exceed the largest row in the original table.
+
+| Missing line item | Footprint | Basis | Why it belongs |
+| --- | --- | --- | --- |
+| TensorRT engine build, transient | **1.46 GiB** | Measured (G1) | Bigger than every claimed row except the VLM, and completely absent. A real graph will cost more than the 68 KB toy that produced this number. |
+| VLM KV cache + llama.cpp compute buffers | 0.24–0.58 GiB | Derived | Weights are not the whole cost of serving a VLM. |
+| PyTorch + CUDA context + kernel libraries | 0.59–0.98 GiB | Estimated | Charged once per GPU process; both `smolvla` and the embedder need it. |
+| Chroma HNSW index + SQLite | 0.20–0.39 GiB | Estimated | Stage I is in the plan, so its memory belongs in the budget. |
+| Agent harness process | 0.03 GiB | Measured | Included for completeness; genuinely cheap. |
+
+## Co-residency: what actually fits
+
+The decision this budget exists to support is not the total but **what can be resident at once.**
+The table below holds the embedder at INT8 and the VLM context at 4096 tokens — the most
+favourable assumptions available — and includes the always-charged OS baseline. "Fits" means the
+**pessimistic** bound still leaves 400 MiB of slack for page cache and NVMM contiguity.
+
+| Co-residency set | Total (MiB) | Headroom vs 7620 (MiB) | Verdict |
+| --- | --- | --- | --- |
+| Voice only (ASR + TTS + harness) | 2763–2942 | +4678 … +4857 | **Fits** |
+| Voice + VLM, vision resident | 6257–6986 | +634 … +1363 | **Fits** |
+| Voice + VLM, vision demand-loaded | 5007–5736 | +1884 … +2613 | **Fits** |
+| Voice + `smolvla` | 4263–4842 | +2778 … +3357 | **Fits** |
+| Voice + engine build | 4254–4433 | +3187 … +3366 | **Fits** |
+| Voice + `smolvla` + engine build | 5754–6333 | +1287 … +1866 | **Fits** |
+| Voice + `smolvla` + embedder INT8 + stores (no VLM) | 6163–6942 | +678 … +1457 | **Fits** |
+| Voice + VLM text-only + engine build | 6498–7227 | +393 … +1122 | Marginal |
+| Voice + VLM text-only + `smolvla` | 6507–7636 | −16 … +1113 | Optimistic bound only |
+| Voice + VLM text-only + embedder INT8 + stores | 7507–8836 | −1216 … +113 | Optimistic bound only |
+| Voice + VLM (vision) + `smolvla` | 7757–8886 | −1266 … −137 | **Does not fit** |
+| Voice + VLM (vision) + engine build | 7748–8477 | −857 … −128 | **Does not fit** |
+| Voice + VLM (vision) + embedder INT8 | 8557–9686 | −2066 … −937 | **Does not fit** |
+| Voice + VLM (vision) + embedder FP16 | 10257–11386 | −3766 … −2637 | **Does not fit** |
+| **Spec as written, everything resident** | **9957–11286** | **−3666 … −2337** | **Does not fit** |
+
+Three conclusions follow directly:
+
+1. **One large subsystem at a time.** Voice plus any single large model fits comfortably. Voice plus
+   the full VLM plus `smolvla` is over the pool even at its optimistic bound. There is **no**
+   arrangement in which the VLM, the VLA policy, the embedder and the voice stack are all resident.
+2. **The vision tower must be demand-loaded.** 1250 MiB of F16 `mmproj` is 23% of the model budget
+   and only earns its place on frames that need visual grounding. Evicting it is what moves
+   "reasoning + navigation" from *does not fit* to merely marginal.
+3. **Engine builds need a nearly empty board.** Voice may stay up during a build; the VLM with its
+   vision tower may not.
+
+## Recommendations
+
+### 1. Replace the multimodal embedder with a text-only one for Stage I
+
+Highest-leverage change available: it recovers **1.4–3.1 GiB**, more than any other decision here.
+A 1.7B multimodal encoder is the wrong shape for a board that also has to hold a VLM — and since
+the VLM already carries a vision tower, the embedder's SigLip2 half is largely redundant
+capability. `JETBOT_SPEC.md` already lists **EmbeddingGemma** in its alternatives column; a
+100–300M text encoder lands near 0.2–0.6 GiB. G1 §G4 reaches the same conclusion independently.
+
+### 2. Treat `mmproj` demand-loading as mandatory, not an optimization
+
+The F16 vision tower cannot be quantized without visible degradation, so its 1250 MiB is fixed and
+the only lever is residency: load per visual query, evict after. The Q4 backbone can stay resident,
+because llama.cpp mmaps it and the kernel can reclaim those pages without an explicit unload.
+
+### 3. Nothing large may be co-resident with an engine build
+
+Measured 1491 MiB for a trivial graph. Give builds a dedicated window with the voice stack as the
+only other tenant (4254–4433 MiB total). **Never** build while the VLM's vision tower, the
+embedder, or a PyTorch process is loaded.
+
+### 4. Make the mode switch explicit in the agent design
+
+Reasoning mode (voice + VLM) and navigation mode (voice + `smolvla`) each fit with room to spare;
+their union does not. That requires a model-residency manager in the harness with a real unload
+path, not an implicit hope. Voice stays resident across both modes — it is the cheapest thing on
+the board at 520–673 MiB and it is CPU-only, so it never contends for the GPU.
+
+### 5. Do not spend the 32 GiB swap on model weights
+
+Swap has been touched for **exactly 0 bytes** through F4, F5 and G1 at `vm.swappiness=60`. Keep it
+that way. A paged-out policy network means a stalled control loop on a robot with a motor watchdog,
+so swap is OOM insurance rather than capacity. `PROJECT_PLAN.md` already says this; the budget now
+has the numbers behind it.
+
+### 6. Cap utterance and generation length
+
+Both voice models grow with input/output length and nothing else: ASR 325 → 466 MiB from 6.6 s to
+16.7 s, TTS 163 → 175 MiB from 2.8 s to 6.4 s. Capping length is a hard cap on those lines.
+
+## What is still unmeasured
+
+**The two largest line items in this budget have never been loaded on this board.** Closing that is
+the only way to tighten the total.
+
+| Unmeasured | Estimate | Blocked by | What would close it |
+| --- | --- | --- | --- |
+| Qwen2.5-VL-3B via llama.cpp | 3.41–3.95 GiB | **G2** — no llama.cpp binary on this host, no GGUF fetched, CUDA build for Tegra must be compiled locally | Peak process RSS and a `tegrastats` trough from a real forward pass, **with and without the vision tower loaded**. Also measure how much of the mmap-backed Q4 backbone is genuinely resident under pressure, which could move the number either way. |
+| `llama-nemotron-embed-vl-1b-v2` | 1.66–3.32 GiB | **G4**, itself blocked on **G1a** (PyTorch absent) | Peak RSS from a real embedding call, in whatever precision actually loads. Confirm whether any INT8 path exists on Tegra at all. |
+| PyTorch + CUDA context on Tegra | 0.59–0.98 GiB | **G1a** | RSS of a bare `import torch` plus a CUDA context on this board, before any weights. |
+| Chroma + SQLite | 0.20–0.39 GiB | Stage I not started | RSS of the store with a representative index loaded. |
+| ROS 2 / Isaac ROS graph | 0 or 0.30 GiB | not installed | Only if ROS 2 is actually adopted. |
+| Real `trtexec` build RSS | unknown | G1 sampling bug, fixed but not re-run | Re-run `./scripts/bringup/g1_tensorrt_smoke.sh`; the `tracked_pid` field marks output from the fixed version. |
+
+**G2 and G4 must report peak process RSS and a `tegrastats` trough the way F4 and F5 do.** Until
+they do, the two biggest numbers in this budget are the two that cannot be defended.
+
+## Reproduce
+
+```bash
+# Pool, baseline, swap
+grep -E "MemTotal|MemAvailable|SwapTotal|SwapFree" /proc/meminfo
+tegrastats --interval 1000 | head -3
+ps -o rss=,comm= -C nvargus-daemon
+
+# Source gates (artifacts under data/bringup/ are gitignored; re-run to regenerate)
+./scripts/bringup/test_fastconformer_asr.sh     # F4 -> f4_fastconformer_asr.json
+./scripts/bringup/test_matcha_hifigan_tts.sh    # F5 -> f5_matcha_hifigan_tts.json
+./scripts/bringup/g1_tensorrt_smoke.sh          # G1 -> g1_runtime.json
+```
+
+Source documents: [06-voice.md](bringup/06-voice.md) (F1–F5),
+[07-tensorrt.md](bringup/07-tensorrt.md) and [07-tensorrt-g1.md](bringup/07-tensorrt-g1.md) (G1),
+[01-os.md](bringup/01-os.md) (Stage A, swap), [`JETBOT_SPEC.md`](../JETBOT_SPEC.md).
