@@ -147,11 +147,11 @@ Rescoped 2026-08-26 from "build three TensorRT engines" to "stand up a runtime t
 
 | Issue | Verify | State |
 | --- | --- | --- |
-| G1 TensorRT runtime present | `./scripts/bringup/g1_tensorrt_smoke.sh` | **Pass** |
-| **G1a install PyTorch (JetPack 6 / CUDA 12.6 aarch64)** | `import torch`, `torch.cuda.is_available()` | **Prerequisite — ahead of G3/G4** |
-| G2 Qwen2.5-VL-3B **via llama.cpp + GGUF** dummy forward | dummy I/O, no camera loop | Open |
-| G3 smolvla dummy motor-token I/O (no PWM) | dummy I/O | Blocked on G1a |
-| G4 Nemotron embed dummy vector | dummy I/O | Blocked on G1a |
+| [#16](https://github.com/AbuAyah110/jetbot-orin-super/issues/16) G1 TensorRT runtime present | `./scripts/bringup/g1_tensorrt_smoke.sh` | **Pass** |
+| **[#30](https://github.com/AbuAyah110/jetbot-orin-super/issues/30) G1a install PyTorch (JetPack 6 / CUDA 12.6 aarch64)** | `import torch`, `torch.cuda.is_available()` | **Prerequisite — ahead of G3/G4** |
+| [#17](https://github.com/AbuAyah110/jetbot-orin-super/issues/17) G2 Qwen2.5-VL-3B **via llama.cpp + GGUF** dummy forward | dummy I/O, no camera loop | Open |
+| [#18](https://github.com/AbuAyah110/jetbot-orin-super/issues/18) G3 smolvla dummy motor-token I/O (no PWM) | dummy I/O | Blocked on #30 |
+| [#19](https://github.com/AbuAyah110/jetbot-orin-super/issues/19) G4 Nemotron embed dummy vector | dummy I/O | Blocked on #30 |
 
 G1 pass 2026-08-26: TensorRT **10.3.0.30**, CUDA **12.6.11**, cuDNN **9.3.0**. The gate went past reporting a version and built three engines from a 68 KB ONNX graph verified against a NumPy recompute — `trtexec` FP32 build 1.82 s, 121.3 KB engine, **0.0415 ms** median, max rel. err **1.7e-06**; Python API 3.80 s / 0.1141 ms. **The builder peaked ~1.5 GB RSS for a 68 KB graph**, so engine building must be budgeted separately from running. `trtexec` and `nvcc` are installed but **not on `PATH`**, and the `.venv` needs a `PYTHONPATH` bridge to see the apt TensorRT bindings.
 
@@ -184,7 +184,7 @@ Three things differ from the ticket bodies, deliberately:
 - **I3 ships no placeholder OCR or grounding.** #22 asked for placeholders; both tools raise `StageNotReady` instead, because the harness cannot tell an invented string from a read one and a fabricated caption or box would propagate into a decision and eventually into motion. They wait on the Stage G VLM runtime.
 - **Tests live in `tests/unit/`**, which is what `pyproject.toml` sets as `testpaths`, not the `tests/agent/…` paths I3/I4 name.
 
-Two environment gaps recorded rather than worked around: **`api.tavily.com` is unreachable from this Jetson** (connection reset), so I4 is registrable but unexercised live; and **OpenCV is absent from `.venv`**, so frame saves fall back to uncompressed PPM and report the path actually written — install the `.[vision]` extra for JPEG.
+Two environment gaps recorded rather than worked around, tracked in [#31](https://github.com/AbuAyah110/jetbot-orin-super/issues/31): **`api.tavily.com` is unreachable from this Jetson** (connection reset), so I4 is registrable but unexercised live; and **OpenCV is absent from `.venv`**, so frame saves fall back to uncompressed PPM and report the path actually written — install the `.[vision]` extra for JPEG, then re-verify the Stage F `numpy` pins still hold.
 
 ### Stage H issue bodies
 
