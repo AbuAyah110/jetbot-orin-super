@@ -35,6 +35,16 @@ build/
 !/data/audio/.gitkeep
 /data/bringup/**
 !/data/bringup/.gitkeep
+# Fetched model checkpoints and downloaded wheels (archives, espeak-ng G2P data,
+# tokens); re-run the scripts/bringup/fetch_*.sh gates to regenerate. The *.onnx
+# rule above only covers the graphs, not the archives shipped alongside them.
+# Keep the broad rule ahead of the negations: the last match wins, and a .gitkeep
+# can only be re-included if its parent directory is re-included first.
+/data/models/**
+!/data/models/**/
+!/data/models/.gitkeep
+!/data/models/f3/.gitkeep
+!/data/models/f5/.gitkeep
 
 # ROS build artifacts
 ros2_ws/build/
