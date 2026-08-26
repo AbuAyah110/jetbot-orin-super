@@ -75,6 +75,22 @@ TIER2_UNITS=(
 )
 TIER2_SNAPS=(chromium gnome-42-2204 gtk-common-themes cups)
 
+# Periodic jobs that can spike CPU, disk and a few hundred MB of memory at an
+# arbitrary moment. Steady-state cost is zero, but an apt-daily run firing in
+# the middle of a navigation loop is a real hazard on a robot, so these are
+# masked rather than merely stopped.
+TIMERS=(
+  apt-daily.timer
+  apt-daily-upgrade.timer
+  update-notifier-download.timer
+  update-notifier-motd.timer
+  motd-news.timer
+  fwupd-refresh.timer
+  man-db.timer
+  anacron.timer
+  dpkg-db-backup.timer
+)
+
 systemd_reachable() { systemctl is-system-running >/dev/null 2>&1 || \
   [ -n "$(systemctl is-active dbus.service 2>/dev/null)" ]; }
 
@@ -128,6 +144,61 @@ if [ "$TIER2" -eq 1 ] && command -v snap >/dev/null 2>&1; then
     fi
   done
 fi
+
+# lpd needs special handling: it is a SysV init script from 2006 wrapped by
+# systemd-sysv-generator, so its unit lives in /run and `systemctl disable`
+# does not persist across a reboot.
+if [ -x /etc/init.d/lpd ]; then
+  echo
+  if [ "$APPLY" -eq 1 ]; then
+    systemctl stop lpd.service >/dev/null 2>&1
+    if command -v update-rc.d >/dev/null 2>&1; then
+      update-rc.d lpd disable >/dev/null 2>&1 \
+        && echo "  disabled lpd (SysV init, /etc/init.d/lpd)" \
+        || echo "  FAILED   lpd — disable it with: apt purge lpr"
+    fi
+    echo "  note: 'apt purge lpr' removes it permanently; it is a BSD line"
+    echo "        printer daemon and nothing on this robot prints."
+  else
+    echo "  would disable lpd (SysV init from 2006; survives systemctl disable)"
+  fi
+fi
+
+# vm tuning. JETBOT_SPEC.md asks for vm.swappiness=10; the board is running the
+# kernel default of 60 with no setting anywhere in /etc/sysctl.d. With 32 GiB of
+# NVMe swap present as a safety net, a low swappiness keeps model weights
+# resident instead of letting the kernel page them out under cache pressure.
+SYSCTL_FILE=/etc/sysctl.d/99-jetbot-memory.conf
+echo
+current_swappiness=$(sysctl -n vm.swappiness 2>/dev/null)
+if [ "$APPLY" -eq 1 ]; then
+  if [ ! -f "$SYSCTL_FILE" ]; then
+    cat > "$SYSCTL_FILE" <<'SYSCTL'
+# JetBot: keep model weights resident. Swap exists as a safety net for engine
+# builds, not as a routine tier. See JETBOT_SPEC.md.
+vm.swappiness = 10
+SYSCTL
+    sysctl -p "$SYSCTL_FILE" >/dev/null 2>&1 \
+      && echo "  vm.swappiness $current_swappiness -> 10 (persisted in $SYSCTL_FILE)" \
+      || echo "  FAILED to apply $SYSCTL_FILE"
+  else
+    echo "  vm.swappiness already managed by $SYSCTL_FILE (now $current_swappiness)"
+  fi
+else
+  echo "  would set vm.swappiness=10 (currently $current_swappiness) via $SYSCTL_FILE"
+fi
+
+echo
+for t in "${TIMERS[@]}"; do
+  exists "$t" || continue
+  if [ "$APPLY" -eq 1 ]; then
+    systemctl mask --now "$t" >/dev/null 2>&1 \
+      && printf '  masked   %s\n' "$t" \
+      || printf '  FAILED   %s\n' "$t"
+  else
+    printf '  would mask    %s\n' "$t"
+  fi
+done
 
 echo
 echo "after:  $(mem_now)"
