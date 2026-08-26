@@ -115,6 +115,91 @@ Run the stages explicitly: text → FastPitch mel spectrogram → HiFi-GAN wavef
 
 Pass: both model stages complete and the WAV is intelligible without clipping. Record model/precision/runtime, cold and warm text-to-WAV latency, generated audio duration, synthesis real-time factor (`inference_seconds / generated_audio_seconds`), CPU/GPU utilization, and peak unified RAM/VRAM. Decide feasibility on measured 8 GB Orin results; optimize/export only if supported and needed.
 
+### Result 2026-08-25 — PASS with a documented substitution (CPU, fp32 ONNX)
+
+Gate: `./scripts/bringup/test_matcha_hifigan_tts.sh` (fetches models, then runs the sweep). Report: `data/bringup/f5_matcha_hifigan_tts.json` (local artifact — `data/bringup/**` is gitignored; re-run the gate to regenerate it). Each configuration runs in its own worker process so peak RSS is attributed to that configuration alone.
+
+**Substitution: the mel generator is Matcha-TTS, not FastPitch. The vocoder is genuinely HiFi-GAN.** The two-stage shape the gate asks for is preserved — text → mel spectrogram → HiFi-GAN → waveform — and only the acoustic model differs. This was not a silent swap; the FastPitch path was chased to the point of failure first:
+
+| Attempt | Result |
+| --- | --- |
+| `nvidia/nemo/tts_en_fastpitch` 1.8.1 via `api.ngc.nvidia.com` | **Reachable, 200, 187,023,360 bytes.** No key needed. |
+| `nvidia/nemo/tts_hifigan` 1.0.0rc1 via `api.ngc.nvidia.com` | **Reachable, 200, 315,386,678 bytes.** No key needed. |
+| Either version's file listing | `totalFileCount: 1` — a single `.nemo` archive. **No ONNX and no TensorRT plan exists on NGC.** |
+| `huggingface.co/nvidia/tts_en_fastpitch` | Blocked: `HTTP 403 from proxy after CONNECT`. |
+
+So the weights are downloadable but not *runnable*: a `.nemo` is a torch checkpoint, and loading or exporting one requires `nemo_toolkit[tts]`. A dry-run resolve of that extra on this interpreter produces **161 packages**, headed by `nemo-toolkit 3.0.0`, `torch 2.13.0`, `triton 3.7.1`, and a complete **CUDA 13** wheel stack (`nvidia-cudnn-cu13`, `nvidia-cublas 13`, `nvidia-nccl-cu13`, `nvidia-cusparselt-cu13`, `nvidia-nvshmem-cu13`, `cuda-toolkit 13`). Summing the PyPI wheel sizes for just 26 of those 161 packages is **3.37 GB**. Two independent reasons not to install it:
+
+- **Wrong CUDA generation.** JetPack 6 / L4T R36.4.4 is CUDA 12.6. These are CUDA 13 wheels built for SBSA discrete GPUs, not Tegra iGPU builds, so they would not reach the Orin's GPU even after the download — the same wall F4 hit looking for `onnxruntime-gpu`.
+- **Version skew.** The checkpoint was published in 2022 against NeMo 1.8; the only resolvable toolkit is NeMo 3.0.
+
+Spending 3.37 GB on an 8 GB device to obtain a CPU-only, version-skewed FastPitch is a worse engineering outcome than keeping the HiFi-GAN vocoder and substituting a mel generator that is already exported to ONNX. Revisit if a Jetson-index `nemo_toolkit` or an NVIDIA-published FastPitch ONNX becomes reachable.
+
+**Install path.** Nothing new was installed. The gate reuses the `sherpa-onnx==1.13.6` already in `.venv` from F4, which supports Matcha-style TTS with an external vocoder and bundles the espeak-ng G2P front end. Checkpoints come from the `k2-fsa/sherpa-onnx` GitHub release mirrors:
+
+| Stage | Model | ONNX size |
+| --- | --- | --- |
+| Acoustic (text → mel) | `matcha-icefall-en_US-ljspeech`, LJSpeech, 1 female speaker | 70.7 MiB |
+| Vocoder (mel → wave) | `hifigan_v2.onnx` (original jik876 HiFi-GAN weights) | **3.6 MiB** |
+| Vocoder alternative | `hifigan_v1.onnx` | 53.2 MiB |
+
+Output is 22050 Hz mono. `first audio` is the time to synthesize the **first sentence only** (`max_num_sentences=1`), which is the number that matters for a robot: it is when the speaker can legitimately start talking while the rest is still being generated. RTF is `total_warm_median / generated_audio_seconds` over 5 warm runs; median, not mean, for the same shared-board reason as F4.
+
+| Config | Vocoder | Threads | Text | Audio | Cold (load+all) | First audio (warm) | Total warm | RTF | Cores busy | Load avg | Peak RSS | Peak |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| v2, 1 thread | hifigan_v2 | 1 | 2 sentences | 2.81 s | 4.38 s | 0.626 s | 1.061 s | 0.377 | 1.0 | 1.05 | 163 MiB | 0.49 |
+| **v2, 2 threads** | hifigan_v2 | 2 | 2 sentences | 2.81 s | 3.62 s | **0.349 s** | 0.602 s | **0.214** | 2.1 | 1.20 | 163 MiB | 0.47 |
+| v2, 4 threads | hifigan_v2 | 4 | 2 sentences | 2.81 s | 3.26 s | 0.220 s | 0.389 s | **0.138** | 4.4 | 1.43 | 162 MiB | 0.42 |
+| v1, 2 threads | hifigan_v1 | 2 | 2 sentences | 2.81 s | 8.31 s | 2.060 s | 3.478 s | **1.237** ✗ | 2.0 | 1.64 | 241 MiB | 0.48 |
+| v2, 2 threads, long | hifigan_v2 | 2 | 3 sentences | 6.40 s | 4.43 s | 0.428 s | 1.326 s | 0.207 | 2.1 | 1.62 | 175 MiB | 0.46 |
+
+Test sentences, both robot-relevant, written to `data/audio/f5/` (gitignored):
+
+- `robot_stop_*.wav` — "Obstacle detected. Stopping now." → 2.81 s
+- `robot_dock_hifigan_v2_2t.wav` — "Battery at twelve percent. Returning to the charging dock. Please clear a path ahead." → 6.40 s
+
+Every WAV was validated offline before any playback was considered: mono, 16-bit, 22050 Hz, peak 0.42–0.49 (**not clipped**, threshold 0.999), RMS 0.047–0.061 (**not silent**). The gate fails itself on a clipped, silent, or wrong-rate file.
+
+**Intelligibility was measured, not asserted.** Nobody can listen in a headless sandbox, so the gate feeds each synthesized WAV back through the **F4 FastConformer recognizer** (resampled 22050 → 16000 Hz) and scores the transcript against the input text. Round-trip results:
+
+| WAV | CER | WER | Transcript |
+| --- | --- | --- | --- |
+| `robot_stop_hifigan_v2_{1,2,4}t.wav` | **0.000** | **0.00** | `obstacle detected. Stopping now,` |
+| `robot_dock_hifigan_v2_2t.wav` | **0.012** | 0.14 | `battery at twelve per cent. Returning to the charging dock. Please clear a path ahead,` |
+| `robot_stop_hifigan_v1_2t.wav` | 0.067 | 0.25 | `obstacle detected. stotopping now,` |
+
+Scores are computed on case-folded, punctuation-stripped words, as in F4, so the recognizer's trailing comma is not an error. The `robot_dock` row is the recognizer splitting `percent` into `per cent`; the audio is correct. That single token is 14% of a seven-word reference but 1.2% of its characters, which is why **the gate decides on CER (≤ 0.15) and records WER for continuity with F4** — on a four-word phrase like "Obstacle detected. Stopping now." one substitution is already WER 0.25, so WER cannot tell a softened consonant from unintelligible speech.
+
+**Matcha sampling is stochastic** (`noise_scale`), so every invocation produces slightly different audio and the round-trip score moves; the table is one run. Across four sweeps the worst row per run ranged **CER 0.012–0.067**, the maximum being the `stotopping` sample above. Note that this row is **WER 0.25 while being plainly intelligible** — it would have failed a WER ≤ 0.2 gate. That is the concrete reason the threshold is on CER; do not tighten it back to WER without accounting for the four-word phrases.
+
+**Sentences must not be butt-spliced — this was a real bug caught by the round-trip check.** Synthesizing per sentence and concatenating with no gap let the tail of "detected." collide with the plosive onset of "Stopping", and the recognizer heard **"Sopping" in 4 of 8 runs**. The same sentence synthesized alone was correct **12 of 12**, so it is a splice artifact, not a model defect. Inserting **200 ms of silence** between sentences restored 8 of 8 and reads as normal prosody; 100 ms was still wrong 2 of 8. `INTER_SENTENCE_GAP_S = 0.20` in the gate. F6 must keep this gap when it streams sentence-by-sentence, and the same silence has to be present in the AEC reference tap.
+
+**The vocoder choice is the load-bearing result.** HiFi-GAN **v1 is unusable on this box: RTF 1.237, slower than real time**, and it costs 1.5× the peak RSS. v2 at the same thread count is **5.8× faster** for a model **15× smaller**, and v1 scored no better on the round trip, so it buys nothing measurable here. Anyone tempted to "upgrade" to v1 for quality should re-measure first. The 4-thread row is real scaling (4.4 cores actually busy), unlike F4's contended 4-thread rows.
+
+**8 GB fit.** Measured, not extrapolated. Peak RSS is 162–175 MiB with v2 — roughly half of F4's ASR. Growth from 2.81 s to 6.40 s of output was 163 → 175 MiB, so memory tracks generated length and capping utterance length caps memory. System `MemAvailable` never fell below **5096 MiB**, and `tegrastats` reported `RAM 2243/7620MB`, `GR3D_FREQ 0%`, and **0 MB of the 32 GiB swap touched**. Sustained real-time TTS fits with a very wide margin.
+
+**Runtime choice for the agent.** Use **`hifigan_v2` at 2 threads** for Stage H ticket I6: RTF 0.214 and first audio in **349 ms** on two cores. Paired with F4's offline CTC at 2 threads, ASR + TTS together occupy 4 of 6 cores and about 488 MiB, leaving two cores for the camera, motor watchdog, and agent loop. The 4-thread configuration is faster in isolation but would contend with the recognizer.
+
+**ALSA safety rules used (F1 discipline, unchanged).** The SSS1629's `Mic` **playback** control is the hardware sidetone that previously caused a dangerous mic-to-speaker feedback loop, so the gate treats playback as the hazardous operation:
+
+- The endpoint is resolved by **ALSA name** through `resolve_sss1629()` → `plughw:CARD=Device,DEV=0`. The card index (currently 2) is read only to address `amixer` and is never written into a device string; the helper refuses any endpoint that is not `plughw:CARD=`.
+- `Mic` playback is driven to **0% and muted** before playback and again afterward.
+- `Speaker` is capped at **40%** and actually set to **20%**; the gate asserts the cap before it starts.
+- Each file is played **exactly once, sequentially**, never concurrently with capture — the gate checks `pgrep -x arecord` and refuses if a recorder is live. No `arecord` is ever started in this gate.
+- Afterward: `pkill -x aplay` for any lingering player, then the speaker is **re-muted** so an idle robot cannot ring.
+- Playback is opt-in via `JETBOT_F5_PLAYBACK=1` and self-disables if `/dev/snd` is absent.
+
+**Live playback did NOT happen.** `/proc/asound/cards` confirms the card is present and name-resolvable (`2 [Device]: USB-Audio - USB PnP Audio Device`, `Solid State System Co.,Ltd.`), but `/dev/snd` is not exposed to the bring-up sandbox, so `aplay` could not run. The WAVs were verified offline instead, as recorded above. **The F5 pass is therefore on synthesis and file validation only; the "one low-volume `aplay`" half of the gate is still owed** and must be run on a session with `/dev/snd` before F5 is considered fully closed.
+
+**Open items.**
+
+- Run the one-shot low-volume `aplay` with `/dev/snd` available to close the playback half of the gate. Confirm intelligibility by ear.
+- **Sample-rate mismatch ahead of F6.** TTS emits 22050 Hz; capture, the F2 APM, and F4 ASR are all 16 kHz. The F6 reference tap that feeds playback into the APM far-end input **must resample 22050 → 16000** and account for that resampler in the delay alignment. AEC silently fails on a mis-rated reference, which is exactly the condition that produces feedback.
+- The voice is LJSpeech (single female speaker), not an NVIDIA voice. Acceptable for robot status phrases; revisit if a specific voice is required.
+- No CUDA execution provider, same as F4. Every number here is CPU-only and therefore a floor, not a ceiling.
+
+Per the stage rules, optimization (TensorRT export, GPU provider) stays open rather than becoming a requirement — F5 already passes with margin at 2 threads.
+
 ## F6 — Duplex voice pipeline and watchdog
 
 Attempt duplex operation only after F2 passes. Route playback samples to both ALSA and the APM far-end/reference input with measured delay alignment. Pipeline:
