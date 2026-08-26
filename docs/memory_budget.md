@@ -214,12 +214,21 @@ Both voice models grow with input/output length and nothing else: ASR 325 → 46
 
 ## User-supplied quantized checkpoints (2026-08-26)
 
-Two Hugging Face repos were offered as a rebuttal to the all-resident verdict.
-Both are **real published checkpoints**. Neither moves the verdict on this
-board. The Hub file sizes were taken from the Hub tree API (LFS `size` fields);
-the weights were **not** downloaded.
+One Hugging Face VLM checkpoint was offered as a rebuttal to the all-resident
+verdict. Hub file sizes for that VLM were taken from the Hub tree API (LFS
+`size` fields); the weights were **not** downloaded. It does **not** reverse
+the verdict.
 
-### 1. `Azaz666/Qwen2.5-VL-3B-Instruct-AWQ-INT4`
+**Rejected — do not use to shrink any line.**
+`nvidia/llama-nemotron-embed-vl-1b-v2-fp8` is a real NVIDIA ModelOpt/vLLM FP8
+export, but it is not a tenant on this board: TensorRT-Edge-LLM's Orin support
+matrix is **FP16, INT8, and INT4 only** ("Jetson Orin does not run FP8 or FP4
+model engines"), and SM 87 has no native FP8 Tensor Cores. The embedder line
+stays the prior **1700 MiB INT8 (aspirational) / 3400 MiB FP16** figures, or a
+smaller text-only alternative (EmbeddingGemma-class, ~0.2–0.6 GiB). FP8 is not
+an intermediate.
+
+### `Azaz666/Qwen2.5-VL-3B-Instruct-AWQ-INT4`
 
 | Field | Value |
 | --- | --- |
@@ -256,84 +265,44 @@ INT4 groupwise GEMM existing in Edge-LLM ≠ this safetensors repo is a drop-in
 engine. Weights-on-disk also ≠ resident footprint: KV cache, TRT runtime, and
 activations remain separate line items (still unmeasured for a 3B VLM).
 
-### 2. `nvidia/llama-nemotron-embed-vl-1b-v2-fp8`
+### Recalculated VLM line (weights vs resident)
 
-| Field | Value |
-| --- | --- |
-| Repo | https://huggingface.co/nvidia/llama-nemotron-embed-vl-1b-v2-fp8 |
-| Revision SHA | `b4751b329b7d797cb6abfe018e8bedf1051a80aa` (current `main`, 2026-08-26) |
-| Publisher | **NVIDIA** |
-| License | NVIDIA Open Model License + Llama 3.2 Community |
-| Declared runtime | **vLLM** + sentence-transformers; quantized with **TensorRT Model Optimizer 0.42.0** |
-| `model.safetensors` | **2,383,531,336 B = 2273 MiB** |
-| Hub dtype mix | 973,078,528 F8_E4M3 + **705,173,952 BF16** |
-| Parent BF16 file | `nvidia/llama-nemotron-embed-vl-1b-v2` `model.safetensors` = 3,356,585,352 B = **3201 MiB** |
+Previous estimates are **not** replaced. The AWQ Hub size is an alternate
+**weight** column only. The embedder is **not** recalculated from the rejected
+FP8 repo.
 
-Architecture: Eagle VLM, Llama 3.2 1B + SigLip2 400M, **~1.7B params** (unchanged).
-`hf_quant_config.json`: `quant_algo: FP8`, **exclude** `mlp1*`, `vision_model*`,
-`language_model.lm_head*` — the vision tower stays BF16. This is W8A8 ModelOpt
-FP8, not INT8.
-
-Card hardware line, verbatim: **Supported Hardware Microarchitecture
-Compatibility: NVIDIA Blackwell, NVIDIA Hopper, NVIDIA Lovelace.** Test
-hardware: **H100 SXM**. Lovelace is Ada (SM 89). Orin Nano is **Ampere SM 87**.
-That list does not include Ampere or Jetson.
-
-**Can it load here?**
-
-| Runtime | Loadable on Orin Nano Super SM 87? |
-| --- | --- |
-| TensorRT-Edge-LLM FP8 engine | **No.** Support matrix: *"Jetson Orin does not run FP8 or FP4 model engines."* Precision constraint on this JetPack 6.2.1 stack: FP16, INT8, INT4 only. The embedder is also **absent** from Edge-LLM's supported-models list. |
-| NIM / vLLM FP8 | **No on this board.** Card targets Hopper / Blackwell / Lovelace. |
-| PyTorch eager FP8 | **Not as an FP8 GEMM.** SM 87 has no native FP8 Tensor Cores (those are SM 89 Ada and SM 90 Hopper). A hypothetical eager path would dequantize to BF16/FP16 for matmul; it would not deliver an FP8-engine memory win, and torch is still absent (G1a). |
-
-Smaller than the 3201 MiB BF16 parent, yes. Executable on this SoC as FP8, no.
-
-### Recalculated line items (weights vs resident)
-
-Previous estimates are **not** replaced; they stay the baseline. These Hub sizes
-are an alternate **weight** column only.
-
-| Line | Original claim | Previous correction | These checkpoints (Hub file) | Still unmeasured on top |
+| Line | Original claim | Previous correction | User-supplied VLM (Hub file) | Still unmeasured on top |
 | --- | --- | --- | --- | --- |
 | VLM | 1.80 GiB INT4 AWQ | 3.41–3.95 GiB Q4 GGUF + F16 mmproj + KV | **3244 MiB** AWQ safetensors (INT4 text + FP16 visual in one file) | KV (72/144/288 MiB) + Edge-LLM/llama.cpp runtime + activations. A6000 card reports 3334 MB for the VLM alone. |
-| Embedder | 0.45 GiB INT8 | 1.66 GiB INT8 (aspirational) / 3.32 GiB FP16 | **2273 MiB** FP8+BF16 file; **cannot execute FP8 here** | PyTorch/vLLM/TRT context; activations. If forced through a dequant path, expect closer to the 3201 MiB BF16 parent plus runtime. |
+| Embedder | 0.45 GiB INT8 | **1.66 GiB INT8 (aspirational) / 3.32 GiB FP16**, or ~0.2–0.6 GiB text-only | Unchanged — FP8 discarded | PyTorch + CUDA context (G1a). |
 
 KV cache formula is unchanged: Qwen2.5-VL-3B still 36 KiB/token.
 
-### Do they fit all-resident?
+### Does the INT4 AWQ VLM make all-resident fit?
 
-**No. They do not reverse the verdict. They only change how the overrun is
-composed, and the FP8 embedder is not a legal tenant on this GPU.**
-
-Arithmetic on **Hub weight files alone** (no KV, no TRT/PyTorch, no voice):
+**No.** It does not reverse the verdict. It only confirms that a real INT4 AWQ
+file is ~3.2 GiB because the vision tower is still FP16 — the same order as the
+llama.cpp Q4+mmproj estimate, not the claimed 1.80 GiB.
 
 | Set | MiB | vs 5351–5377 MiB model budget |
 | --- | --- | --- |
 | AWQ VLM weights only | 3244 | Fits, leaves ~2.1 GiB |
-| FP8 embedder weights only | 2273 | Fits, leaves ~3.1 GiB — **but will not run** |
-| **AWQ VLM + FP8 embedder weights** | **5517** | **Already 140–166 MiB over the model budget** |
-| Those two + measured voice (520–673) | 6037–6190 | Over by ~0.7–0.8 GiB |
-| Spec-shaped: those two + voice + `smolvla` 900 + one GPU runtime 600–1000 + KV@4096 244–594 | **7781–9284** | **Over by 2.4–3.9 GiB vs the 5.2 GiB budget** (9957–11286 previously) |
+| AWQ VLM + KV@4096 + runtime buffers | 3488–3838 | Fits as a single tenant |
+| Voice + AWQ VLM + KV/runtime | 4008–4511 | Fits |
+| Voice + AWQ VLM + `smolvla` 900 + one GPU runtime 600–1000 + KV@4096 | **5508–6411** | **Does not fit** (over even at the low bound) |
+| Voice + AWQ VLM + embedder **FP16** 3400 + runtime + KV@4096 | **8008–8911** | **Does not fit** |
+| Spec-shaped: voice + AWQ VLM + smolvla + embedder FP16 + stores + KV | **9108–10311** | **Does not fit** (same conclusion as the previous 9957–11286 table) |
 
-The two user files **by themselves** exceed the model budget. Adding the
-measured voice stack and the derived VLA weights only widens the gap. Treating
-the FP8 embedder as "not present because it cannot execute" still leaves the
-INT4 VLM at 3244 MiB of weights — the same order as the llama.cpp Q4+mmproj
-estimate — so the co-residency tables in the previous sections do not flip to
-"fits."
+What the AWQ checkpoint **does** establish:
 
-What these checkpoints **do** establish:
-
-1. The original 1.80 GiB VLM claim ignored an FP16 vision tower that both
-   AutoAWQ and official Qwen AWQ leave unquantized.
-2. The original 0.45 GiB embedder claim is still wrong even after NVIDIA's own
-   FP8 export: 2273 MiB on disk, vision still BF16, and the format is illegal on
-   SM 87 / Edge-LLM.
-3. Relative to the **previous correction**, the AWQ file is not a savings versus
-   Q4+mmproj (~3.2 GiB weights either way). The FP8 embedder is smaller than
-   the 3201 MiB BF16 parent (~928 MiB) but **larger** than the aspirational INT8
-   1700 MiB line, and it cannot be loaded.
+1. The original 1.80 GiB VLM claim ignored an FP16 vision tower that both this
+   AutoAWQ export and official `Qwen/Qwen2.5-VL-3B-Instruct-AWQ` leave
+   unquantized.
+2. Relative to the **previous correction**, 3244 MiB of Hub weights is not a
+   savings versus Q4+mmproj (~3.2 GiB weights either way).
+3. AutoAWQ kernels will not run on this SoC; Edge-LLM INT4 is a different
+   pipeline (official Qwen AWQ, export, on-device engine build) and has never
+   been measured here.
 
 Until G2/G4 actually load a legal checkpoint on this board, runtime overhead
 stays estimated.
