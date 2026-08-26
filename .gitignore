@@ -45,6 +45,8 @@ build/
 !/data/models/.gitkeep
 !/data/models/f3/.gitkeep
 !/data/models/f5/.gitkeep
+!/data/models/zipformer/.gitkeep
+!/data/models/piper/.gitkeep
 
 # ROS build artifacts
 ros2_ws/build/
