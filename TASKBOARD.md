@@ -20,7 +20,9 @@ Classic JetBot notebooks already ran for A/B/C. This pass only **re-verified** O
 | B I2C / motors | I2C probe pass; wheels-up PWM not re-run (see notebooks) |
 | C CSI camera | Argus 1-frame pass + notebook preview |
 | D Audio | HW verified; voice models are Stage F |
-| E–G | Open |
+| E Python skeleton | Pass (`.venv`, import smoke) |
+| F Voice | F1, F2, F4 pass; F3 optional; F5/F6 open |
+| G TensorRT | Open |
 | H Agent I1–I8 | Open (before memory) |
 | I Memory | Open (after I8) |
 
@@ -34,7 +36,9 @@ Classic JetBot notebooks already ran for A/B/C. This pass only **re-verified** O
 | Headless `multi-user.target` | `systemctl get-default` |
 | 32 GB swap + `vm.swappiness=10` | `swapon --show`; `cat /proc/sys/vm/swappiness` |
 
-Notes from 2026-08-25: L4T R36.4.4, `/` is `nvme0n1p1`, `NV Power Mode: MAXN_SUPER`, default `multi-user.target`. Swap is **32 GiB** at `/ssd/32GB.swap` (fstab), not `/swapfile`. Swappiness is **60**, not the spec target 10. Do not redo the OS install; optionally tune swappiness later.
+Notes from 2026-08-25: L4T R36.4.4, `/` is `nvme0n1p1`, `NV Power Mode: MAXN_SUPER`, default `multi-user.target`. Swap is **32 GiB** at `/ssd/32GB.swap` (fstab), not `/swapfile`. Swappiness is **60**, not the spec target 10. Do not redo the OS install.
+
+**Recommendation: reconcile the spec to the board, not the board to the spec.** The existing swap is the right size, on the right device, and active with zero usage — F4 ran with 0 MB of 32 GiB swap touched. Recreating it at `/swapfile` risks a non-booting fstab for no benefit. Update `JETBOT_SPEC.md`, `scripts/setup_swap.sh`, and `setup_env.sh` to treat `/ssd/32GB.swap` + `swappiness=60` as the sanctioned configuration, and re-open a swappiness ticket only if a measured workload shows premature swapping. `jetbot_agent/config.yaml` already records the actual values.
 
 ## Stage B — Motors / I2C
 
@@ -80,6 +84,8 @@ Pass 2026-08-25: `.venv` created with `virtualenv` (`python3-venv` apt not prese
 F1 pass 2026-08-25: `plughw:CARD=Device,DEV=0` (Solid State System USB PnP); sidetone off; capture 80%; speaker 20%. See [docs/bringup/04-audio.md](docs/bringup/04-audio.md).
 
 F2 pass 2026-08-25: `pywebrtc-audio==0.1.0` offline fixtures; NS 8.2×; AEC 236×; no live duplex. See [docs/bringup/06-voice.md](docs/bringup/06-voice.md).
+
+F4 pass 2026-08-25: NeMo FastConformer CTC int8 ONNX via `sherpa-onnx==1.13.6` (CPU). Offline model, 2 threads: **RTF 0.045**, warm 0.30 s on 6.6 s audio, **WER 0.00**, peak RSS **324 MiB**, swap untouched. NeMo/PyTorch deliberately not installed — no reachable JetPack-6 torch wheel; ONNX path chosen instead. Streaming 80 ms model also runs (RTF 0.339) and is reserved for F6. Still owed: a mic-captured utterance, and a 4-thread sweep on an idle board (the board had ~2 cores of foreign load). See [docs/bringup/06-voice.md](docs/bringup/06-voice.md).
 | F3: Benchmark optional RNNoise residual denoising | Reproducible APM-only vs APM+RNNoise 48 kHz/resampling A/B report |
 | F4: Validate NVIDIA FastConformer ASR on Orin | One WAV → transcript; latency, real-time factor, utilization, and peak RAM/VRAM recorded |
 | F5: Validate NVIDIA FastPitch and HiFi-GAN TTS on Orin | Text → mel → WAV → safe one-shot playback; latency, real-time factor, utilization, and peak RAM/VRAM recorded |

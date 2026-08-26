@@ -27,7 +27,8 @@ Staged **install-and-test** on this Orin (one gate at a time): **[`TASKBOARD.md`
 - [x] Stage D audio HW (Waveshare SSS1629; ALSA **name** not card index; sidetone **off**)
 - [x] Stage E Python skeleton (`.venv` via `virtualenv`; PyYAML 6.0.3; import smoke pass)
 - [x] Stage F2 WebRTC APM (`pywebrtc-audio` 0.1.0; offline NS/AEC fixtures; no live duplex)
-- [ ] Stage F4/F5 FastConformer ASR + FastPitch/HiFi-GAN TTS (optional F3 RNNoise; F6 duplex after AEC+ASR+TTS)
+- [x] Stage F4 FastConformer ASR (NeMo CTC int8 ONNX via `sherpa-onnx` 1.13.6, CPU; RTF 0.045 @ 2 threads, WER 0.00, 324 MiB peak)
+- [ ] Stage F5 FastPitch/HiFi-GAN TTS (optional F3 RNNoise; F6 duplex after AEC+ASR+TTS)
 - [ ] Stage G TensorRT dummy engines
 - [ ] Stage H agent I1–I8 (harness, safe tools, vision, Tavily, nav dummy, voice, VLM, `main.py`)
 - [ ] Stage I memory (after agent); memory tools after that

@@ -28,12 +28,12 @@ Lightweight re-check only — no OS reinstall, no motor PWM.
 
 | Stage | Result | Evidence |
 | --- | --- | --- |
-| A | **Pass with notes** | L4T R36.4.4, NVMe `/`, MAXN_SUPER, `multi-user.target`, 32 GiB swap. Swap path is `/ssd/32GB.swap` (not `/swapfile`); `vm.swappiness=60` (spec target 10). |
+| A | **Pass with notes** | L4T R36.4.4, NVMe `/`, MAXN_SUPER, `multi-user.target`, 32 GiB swap. Swap path is `/ssd/32GB.swap` (not `/swapfile`); `vm.swappiness=60` (spec target 10). Reconcile the spec to the board rather than recreating swap — see [01-os.md](01-os.md). |
 | B | **Pass (probe)** | I2C buses present; bus 7 shows `0x70`/`0x60`/`0x3c`. PWM **not** re-run. Prior motion: `notebooks/basic_motion/basic_motion.ipynb`. |
 | C | **Pass** | `nvarguscamerasrc` 1-frame EOS; prior live preview: `notebooks/camera/csi_camera_test.ipynb`. |
 | D | **Audio HW verified** | Waveshare SSS1629. Identify by ALSA **name**, never card index. Sidetone **off**. Sequential capture then playback until F2 AEC. |
 | E | **Pass** | `.venv` via `virtualenv` (no `python3-venv` apt). PyYAML 6.0.3. `test_python_skeleton.sh` ok. |
-| F | **F1+F2 pass** | F1 name-resolved ALSA mixer; F2 `pywebrtc-audio` offline NS 8.2× / AEC 236×. F4/F5 models not installed. |
+| F | **F1+F2+F4 pass** | F1 name-resolved ALSA mixer; F2 `pywebrtc-audio` offline NS 8.2× / AEC 236×; F4 FastConformer CTC int8 ONNX via `sherpa-onnx`, RTF 0.045 @ 2 threads, WER 0.00, 324 MiB peak. F5 not installed. |
 | G | Open | TensorRT dummy I/O |
 | H | Not started | Split into I1–I8; starts after G (tools that need F/G wait on those gates). |
 | I | After H | Memory stores after the agent loop skeleton exists. |
