@@ -15,7 +15,7 @@ Master specification for the **Autonomous Evolving JetBot** built on the **NVIDI
 | Motors | PCA9685 `/dev/i2c-1` @ `0x40`, later `hardware/motor_controller.py` | Classic HAT often **bus 7**, addr **`0x70`/`0x60`**; ROS `jetbot_base` + watchdog |
 | Safety | Direct I2C in the final tree | LLMs never PWM; `/cmd_vel` + limits ([`docs/architecture.md`](docs/architecture.md)) |
 | Models | **llama.cpp + GGUF** Qwen2.5-VL-3B; smolvla and Nemotron embed as PyTorch — see [runtime reality](#measured-runtime-reality-2026-08-26) | llama.cpp Cosmos, Qwen3.5-0.8B, EmbeddingGemma |
-| Voice | FastConformer ASR (int8 ONNX, passed); **Matcha-TTS + HiFi-GAN v2** TTS (passed, substituted for FastPitch); WebRTC APM front end **required**, RNNoise **rejected** | F1/F2/F3/F4/F5 done; F6 open |
+| Voice | **Sherpa-ONNX Zipformer ASR + Piper VITS TTS**, int8 CPU models in one process; WebRTC APM front end **required**, RNNoise **rejected** | F1/F2/F3 historical gates retained; compact F4/F5 replacement passed; F6 open |
 | Swap | 32 GB `/swapfile`, `vm.swappiness=10` | This Jetson: 32 GiB `/ssd/32GB.swap`, swappiness 60 — **adopt the as-is column**, see [Stage A notes](docs/bringup/01-os.md) |
 
 **Bring-up rule:** probe I2C buses **1 and 7** and record the real address map. Do not assume `0x40` until it appears. Wheel tests only with wheels off the ground; every motion script must hard-stop on timeout.
@@ -44,14 +44,13 @@ The primary real-time audio front end is **WebRTC Audio Processing Module (APM)*
 
 ASR and TTS are staged independently, proven one file at a time, with latency, real-time factor, and peak unified RAM/VRAM recorded on the 8 GB Orin. Full duplex is forbidden until AEC passes.
 
-**ASR shipped as specified.** FastConformer CTC int8 ONNX via `sherpa-onnx`, CPU, 2 threads: RTF 0.045, WER 0.00, 324 MiB peak.
+**Current ASR default:** `sherpa-onnx-zipformer-small-en-2023-06-26`, using its int8 encoder/decoder/joiner through `sherpa-onnx==1.13.6`, CPU only, 2 threads. The combined Zipformer+Piper gate transcribes its short generated fixture at WER 0.00 and RTF 0.04.
 
-**TTS shipped with a documented substitution: Matcha-TTS (text→mel) + a genuine HiFi-GAN v2 vocoder, not FastPitch.** The two-stage shape is preserved and only the acoustic model differs. FastPitch was chased to failure first: NGC serves the weights, but every version is a single `.nemo` torch checkpoint with **no ONNX and no TensorRT plan**, and loading one requires `nemo_toolkit[tts]`, which resolves to 161 packages headed by a complete **CUDA 13** wheel stack. JetPack 6 is CUDA 12.6 on a Tegra iGPU, so those wheels are the wrong CUDA generation *and* non-Tegra — they would never reach the GPU after a 3.37 GB download. Measured on hifigan_v2 at 2 threads: **first audio 349 ms, RTF 0.214, 163 MiB peak**. **HiFi-GAN v1 is unusable at RTF 1.237** (slower than real time) while being 15× larger and no better on the intelligibility round trip; re-measure before any "upgrade" to v1. Evidence: [F5 results](docs/bringup/06-voice.md).
+**Current TTS default:** `vits-piper-en_US-lessac-low-int8`, a single Piper VITS graph through the same Sherpa-ONNX runtime, CPU only, 2 threads. It emits 16 kHz audio directly, removing the old Matcha/HiFi-GAN two-stage path and its 22.05→16 kHz AEC-reference resampler.
 
-**Two F6 constraints are load-bearing and were found by measurement, not review:**
+The old FastConformer and Matcha/HiFi-GAN results remain historical evidence in the Stage F notes. Their model files and fetch/test scripts are no longer part of the active stack. No NeMo or PyTorch package was installed or retained for voice.
 
-* **TTS emits 22050 Hz while capture, the APM, and ASR are all 16 kHz.** The F6 reference tap that feeds playback into the APM far-end input **must resample 22050 → 16000** and account for that resampler in the delay alignment. AEC fails *silently* on a mis-rated reference, and silent AEC failure is exactly the condition that produces the feedback loop this whole front end exists to prevent.
-* **Preserve the 200 ms inter-sentence gap.** Butt-splicing synthesized sentences let one sentence's tail collide with the next sentence's plosive onset and the recognizer misheard it in 4 of 8 runs; 200 ms of silence restored 8 of 8, and 100 ms did not. F6 must keep that gap in both the playback stream and the AEC reference tap.
+The measured one-process gate peaked at **less than 200 MiB RSS** with both C++ objects resident and reported **0 MiB GPU/VRAM use**. The exact decimal-MB value and run-to-run allocator variation are recorded in [the Stage F notes](docs/bringup/06-voice.md); do not restate this as a strict sub-200,000,000-byte guarantee.
 
 ### Measured runtime reality (2026-08-26)
 
@@ -107,8 +106,8 @@ jetbot_agent/
 ├── audio/                      # Voice Subsystem
 │   ├── __init__.py
 │   ├── audio_preprocessor.py   # WebRTC APM AEC/NS/AGC/HPF/VAD (RNNoise rejected in F3)
-│   ├── fastconformer_asr.py    # FastConformer ASR adapter (int8 ONNX via sherpa-onnx)
-│   └── fastpitch_hifigan_tts.py # TTS adapter — Matcha-TTS mel + HiFi-GAN v2 vocoder
+│   ├── zipformer_asr.py        # Zipformer transducer adapter (int8, CPU)
+│   └── piper_tts.py            # Piper VITS adapter (int8, CPU)
 │
 ├── engine/                     # Model execution — llama.cpp/GGUF for the VLM, PyTorch for the rest
 │   ├── __init__.py
@@ -148,9 +147,9 @@ Live procedures: [`docs/bringup/README.md`](docs/bringup/README.md). Issues: [`T
 | C | IMX219 CSI / Argus | I3 uses camera |
 | D | Waveshare SSS1629 ALSA (name, not card index; sidetone off) | — |
 | E | `jetbot_agent` import skeleton | — |
-| F | WebRTC APM, FastConformer, Matcha+HiFi-GAN TTS, duplex (RNNoise rejected) | I6 waits on F4/F5/F6 |
+| F | WebRTC APM, Zipformer ASR, Piper VITS TTS, duplex (RNNoise rejected) | I6 waits on F4/F5/F6 |
 | G | Model runtimes, dummy I/O only. **PyTorch install comes first**, then llama.cpp/GGUF VLM | I5 smolvla + I7 wait on G |
 | **H** | **Agent integration** | **I1 harness → I2 safe tools → I3 vision → I4 search → I5 nav dummy → I6 voice → I7 VLM → I8 `main.py`** |
 | **I** | **Memory (Chroma + SQLite)** | Memory tools *after* this stage |
 
-Voice stack: **FastConformer** ASR, **Matcha-TTS + HiFi-GAN v2** TTS, **WebRTC APM** front end (required; **RNNoise rejected in F3**). Identify the USB sound device by ALSA name, never a fixed card index.
+Voice stack: **Zipformer** ASR, **Piper VITS** TTS, **WebRTC APM** front end (required; **RNNoise rejected in F3**), all CPU-only through one `sherpa-onnx` process. Identify the USB sound device by ALSA name, never a fixed card index.

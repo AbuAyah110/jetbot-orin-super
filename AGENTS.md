@@ -39,7 +39,7 @@ Therefore, as a cloud agent you **must not**:
 
 1. **Run any hardware gate in `scripts/bringup/*`** — `probe_i2c.sh`,
    `test_csi_camera.sh`, `test_alsa.sh`, `f1_alsa_baseline.sh`,
-   `test_webrtc_apm.sh`, `test_fastconformer_asr.sh`, `test_motors.py`, or
+   `test_webrtc_apm.sh`, `test_zipformer_piper.sh`, `test_motors.py`, or
    equivalents. They will fail, hang, or produce meaningless output.
 2. **Claim hardware verification.** Do not write "verified on device",
    "I2C scan passed", "camera captured", or tick a `TASKBOARD.md` /
