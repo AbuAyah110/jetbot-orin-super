@@ -1,8 +1,19 @@
 # Stage G — TensorRT Edge-LLM support-matrix evaluation
 
-Ticket: [G5: Evaluate and install NVIDIA TensorRT Edge-LLM on JetPack 6.2 / Orin Nano 8 GB](https://github.com/AbuAyah110/jetbot-orin-super/issues/33).
+Tickets: [#34 — build the C++ runtime on this board](https://github.com/AbuAyah110/jetbot-orin-super/issues/34)
+(device side, and the CuTe DSL blocker) and
+[#32 — workstation INT4 AWQ export](https://github.com/AbuAyah110/jetbot-orin-super/issues/32)
+(the ONNX producer).
 Evaluated 2026-08-26 against `NVIDIA/TensorRT-Edge-LLM` at tag **`v0.10.0`**
 (and `main` @ `bb29145`, "TensorRT Edge-LLM 0.10.0 Documentation Update").
+
+> **Independently corroborated.** [#32](https://github.com/AbuAyah110/jetbot-orin-super/issues/32)
+> was filed from a separate investigation (branch `stage-g-edgellm-workstation`,
+> `docs/bringup/07-edgellm-workstation-quant.md`) and independently arrived at the
+> same pins: v0.10.0, INT4 AWQ with an FP16 vision tower, the official
+> `Qwen/Qwen2.5-VL-3B-Instruct-AWQ` checkpoint, ONNX rather than engines over the
+> wire, and no FP8. The CuTe DSL gap below is the one finding that ticket does not
+> cover.
 
 > **This document corrects a factual error in the Stage G1 record.** G1
 > concluded that "there is no NVIDIA product called 'TensorRT Edge-LLM'." That
@@ -441,12 +452,16 @@ available to us** — the FP8-KV exclusion costs us nothing.
    NVIDIA's own Orin Nano 8 GB numbers (36.9 tok/s for a 2B VLM at INT4 AWQ in
    4.4 GB) are the best published evidence we have for what this board can do,
    and they are on the spec's original path.
-3. **Sequence it behind [#30](https://github.com/AbuAyah110/jetbot-orin-super/issues/30) (PyTorch).**
+3. **Sequence the export behind [#30](https://github.com/AbuAyah110/jetbot-orin-super/issues/30) (PyTorch),
+   or do it off-device via [#32](https://github.com/AbuAyah110/jetbot-orin-super/issues/32).**
    Export needs CPU torch only, so #30 unblocks it without needing a CUDA torch
-   build.
-4. **Resolve the CuTe DSL `sm_87`/`cuda12` artifact before budgeting a build.**
-   Until that archive exists, CMake cannot even configure. This is a
-   self-contained, testable sub-task worth doing on its own.
+   build — and the docs explicitly allow exporting on an x86 host and
+   `rsync`-ing the ONNX across, which is what #32 plans.
+4. **Resolve the CuTe DSL `sm_87`/`cuda12` artifact before budgeting a build**
+   ([#34](https://github.com/AbuAyah110/jetbot-orin-super/issues/34)). Until that
+   archive exists, CMake cannot even configure. This is a self-contained,
+   testable sub-task worth doing on its own, and it is independent of the export
+   work.
 5. **Use `Qwen/Qwen2.5-VL-3B-Instruct-AWQ`.** Pre-quantized, on the supported
    list, and it removes the GPU-host quantization step entirely.
 6. **Do not plan for NVFP4, FP8, or FP8 KV cache on this board.** FP16 vision

@@ -51,7 +51,8 @@ Three findings carry forward into every later ticket:
 | G2 | Qwen2.5-VL-3B **via llama.cpp + GGUF**, one dummy vision+text forward | Open — **primary VLM path** |
 | G3 | smolvla dummy motor-token I/O (no PWM) | Blocked on G1a |
 | G4 | llama-nemotron-embed-vl-1b-v2 dummy vector out | Blocked on G1a |
-| G5 | **TensorRT Edge-LLM** — Qwen2.5-VL-3B INT4 AWQ, the spec's original runtime | Open — evaluated on-matrix, blocked on G1a + a CuTe DSL artifact |
+| G5 | **TensorRT Edge-LLM C++ runtime** on this board ([#34](https://github.com/AbuAyah110/jetbot-orin-super/issues/34)) | Open — on-matrix, blocked on an unpublished `sm_87`/CUDA-12 CuTe DSL artifact |
+| G5a | **Workstation INT4 AWQ export** of Qwen2.5-VL-3B ([#32](https://github.com/AbuAyah110/jetbot-orin-super/issues/32)) | Open — produces the ONNX that G5 builds |
 
 **G1a — PyTorch.** G3 and G4 are both blocked on it and no stage previously owned it. It cannot come from PyPI; Jetson needs NVIDIA's wheel index or a `jetson-containers` image matched to CUDA 12.6 / L4T R36.
 
