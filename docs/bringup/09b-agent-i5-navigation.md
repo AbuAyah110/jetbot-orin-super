@@ -1,10 +1,10 @@
 # Stage H / I5 — navigation tools and the motion adapter
 
 Design notes for the Stage H integration slice that finally connects the agent's
-motion vocabulary to a velocity backend. **This file should be folded into
-[`08-agent.md`](08-agent.md) alongside [`09-agent-i1-i2.md`](09-agent-i1-i2.md)
-once I3–I8 land**; it is separate so I5 can be reviewed without touching the
-Stage doc other agents are editing.
+motion vocabulary to a velocity backend. **This is the I5 evidence record.** The
+progress table and the decisions that outlive the slice are folded into
+[`08-agent.md`](08-agent.md), which is the doc to read first; the layering
+diagram and the adapter's clamp/watchdog/e-stop rationale stay here.
 
 Scope: still pure software. No model is loaded, no camera or ALSA device is
 opened, no I2C transaction happens, nothing is published to a real `/cmd_vel`,

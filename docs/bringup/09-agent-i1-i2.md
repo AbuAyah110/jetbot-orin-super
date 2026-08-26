@@ -1,8 +1,9 @@
 # Stage H / I1–I2 — harness skeleton and tool safety boundary
 
-Design notes for the two first Stage H integration slices. **This file should be
-folded into [`08-agent.md`](08-agent.md) once I3–I8 land**; it exists separately
-so I1/I2 can be reviewed without touching the Stage doc other agents are editing.
+Design notes for the two first Stage H integration slices. **This is the I1/I2
+evidence record.** The progress table and the decisions that outlive the slices
+are folded into [`08-agent.md`](08-agent.md), which is the doc to read first; the
+state-machine detail and the safety-boundary rationale stay here.
 
 Scope: pure software. No models are loaded, no camera or ALSA device is opened,
 no I2C transaction happens, and `config/robot.yaml` stays `backend: mock`.

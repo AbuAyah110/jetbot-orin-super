@@ -1,11 +1,9 @@
 # F3 — Optional RNNoise residual denoising: A/B result
 
-> **Fold this file into [06-voice.md](06-voice.md) §F3 when that file is next free.**
-> It was written separately only because `06-voice.md` had uncommitted edits from
-> another session at the time. Nothing here was committed. When folding it in,
-> also update the Stage F row of [README.md](README.md) — it still reads
-> "F1+F2+F4 pass" — and the F3 line in `TASKBOARD.md`. Both were left untouched
-> on purpose to avoid colliding with concurrent sessions.
+> **This is the F3 evidence record.** The verdict and the headline A/B numbers
+> are folded into [06-voice.md](06-voice.md) §F3, which is the doc to read first;
+> the full sweep, install path, and fixture design stay here. [README.md](README.md)
+> and [TASKBOARD.md](../../TASKBOARD.md) carry the same verdict.
 
 **Date:** 2026-08-26 · **Device:** Jetson Orin Nano Super 8GB, L4T R36.4.4, JetPack 6.x, aarch64, Ubuntu 22.04, headless
 **Gate:** `./scripts/bringup/f3_rnnoise_ab.sh` (installs RNNoise if needed, then runs the sweep)

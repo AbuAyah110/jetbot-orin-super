@@ -3,16 +3,21 @@
 Ticket: [G1: TensorRT / Edge-LLM runtime present](https://github.com/AbuAyah110/jetbot-orin-super/issues/16).
 Probed on device 2026-08-26.
 
-> **Fold this into [07-tensorrt.md](07-tensorrt.md) later.** This file exists
-> under a `-g1` name only because another agent held the Stage G doc while G1
-> ran. The content belongs in the Stage G doc; nothing here needs to stay
-> separate once the edits settle.
+> **This is the G1 evidence record.** The verdict, the rescoped ticket list, and
+> the llama.cpp + GGUF decision now live in [07-tensorrt.md](07-tensorrt.md),
+> which is the doc to read first; the measurements, per-model feasibility
+> analysis, and reproduction details stay here rather than bloating the stage
+> doc. [JETBOT_SPEC.md](../../JETBOT_SPEC.md) §"Measured runtime reality"
+> carries the same conclusions.
 
 **Headline: base TensorRT is installed, healthy, and passed a real
 end-to-end engine build + inference. TensorRT-LLM is not installed, and there
 is no NVIDIA product called "TensorRT Edge-LLM." No PyTorch is installed
-anywhere on this board.** G2/G3/G4 as written in
-[JETBOT_SPEC.md](../../JETBOT_SPEC.md) cannot be executed by what is here.
+anywhere on this board.** G2/G3/G4 as originally written could not be executed
+by what is here, so the spec and [07-tensorrt.md](07-tensorrt.md) have since
+been reconciled: Stage G is rescoped to standing up runtimes, the VLM path is
+llama.cpp + GGUF, and PyTorch became its own prerequisite ticket ahead of
+G3/G4.
 
 Reproduce with:
 

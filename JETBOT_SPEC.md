@@ -14,8 +14,8 @@ Master specification for the **Autonomous Evolving JetBot** built on the **NVIDI
 | --- | --- | --- |
 | Motors | PCA9685 `/dev/i2c-1` @ `0x40`, later `hardware/motor_controller.py` | Classic HAT often **bus 7**, addr **`0x70`/`0x60`**; ROS `jetbot_base` + watchdog |
 | Safety | Direct I2C in the final tree | LLMs never PWM; `/cmd_vel` + limits ([`docs/architecture.md`](docs/architecture.md)) |
-| Models | TensorRT-Edge-LLM Qwen2.5-VL-3B, smolvla, Nemotron embed | llama.cpp Cosmos, Qwen3.5-0.8B, EmbeddingGemma |
-| Voice | FastConformer ASR; FastPitch + HiFi-GAN TTS; WebRTC APM front end | Stage F stubs only |
+| Models | **llama.cpp + GGUF** Qwen2.5-VL-3B; smolvla and Nemotron embed as PyTorch — see [runtime reality](#measured-runtime-reality-2026-08-26) | llama.cpp Cosmos, Qwen3.5-0.8B, EmbeddingGemma |
+| Voice | FastConformer ASR (int8 ONNX, passed); **Matcha-TTS + HiFi-GAN v2** TTS (passed, substituted for FastPitch); WebRTC APM front end **required**, RNNoise **rejected** | F1/F2/F3/F4/F5 done; F6 open |
 | Swap | 32 GB `/swapfile`, `vm.swappiness=10` | This Jetson: 32 GiB `/ssd/32GB.swap`, swappiness 60 — **adopt the as-is column**, see [Stage A notes](docs/bringup/01-os.md) |
 
 **Bring-up rule:** probe I2C buses **1 and 7** and record the real address map. Do not assume `0x40` until it appears. Wheel tests only with wheels off the ground; every motion script must hard-stop on timeout.
@@ -34,15 +34,55 @@ Master specification for the **Autonomous Evolving JetBot** built on the **NVIDI
   * **Speaker Output:** Onboard header / 3.5mm audio jack (driven via ALSA `aplay`)
   * **Identity:** select the ALSA endpoint by its USB device name, never a fixed card index
 * **Motor Control:** Spec target PCA9685 on `/dev/i2c-1` @ `0x40`. **This board (2026-08-25 probe):** bus **7** has `0x70` / `0x60` / OLED `0x3c`; bus **1** has kernel-claimed `UU` at `0x40` and `0x25`. Classic notebooks used bus 7 @ `0x70`.
-* **Inference Engines:** TensorRT-Edge-LLM is limited to the compatible language/vision models. FastConformer, FastPitch, and HiFi-GAN must first be validated in their supported NVIDIA runtime on the Orin; export/optimization with TensorRT is a later, model-specific experiment, not an assumed capability of TensorRT-Edge-LLM.
+* **Inference Engines:** base **TensorRT 10.3.0.30** on CUDA 12.6.11 / cuDNN 9.3.0, verified by an end-to-end engine build. There is **no NVIDIA product called "TensorRT Edge-LLM"**; earlier revisions of this spec named one and every reference has been corrected. TensorRT-LLM — the nearest real thing — is **not installed and has no Tegra aarch64 wheel**. The VLM runtime is **llama.cpp + GGUF**. Voice models are validated in their own runtimes first; TensorRT export stays a later, model-specific experiment rather than an assumed capability. Full inventory and smoke-test evidence: [Stage G1 notes](docs/bringup/07-tensorrt-g1.md).
 
 ### Voice architecture
 
 The primary real-time audio front end is **WebRTC Audio Processing Module (APM)**. Process 16 kHz mono audio in 10 ms frames with high-pass filtering, noise suppression, automatic gain control, voice activity detection, and acoustic echo cancellation. AEC must receive the time-aligned far-end/reference audio sent to TTS playback because the robot's speaker is close to its microphone.
 
-RNNoise is an optional residual-denoising experiment after APM, not an AEC replacement. Its native 48 kHz, fixed-frame processing introduces resampling and latency tradeoffs that must be measured before adoption. The first gate stays simple: capture 16 kHz mono, run WebRTC APM, and verify reduced noise and playback echo.
+**RNNoise was benchmarked and rejected (F3, 2026-08-26). WebRTC APM is the only front end.** RNNoise wins every signal metric — 270× noise reduction against the APM's 8.2×, +4.97 dB segmental SNR against +0.76 dB — and still makes the robot worse at hearing: placed behind the APM as a residual denoiser it raises FastConformer WER on real noisy speech from **0.006 to 0.253**, peaking at **0.889** on the fan-hum-plus-motor-whine fixture that most resembles this robot's noise floor. It also costs 15× the APM's CPU and adds ~52 ms of buffering. Do not pin it in `jetbot_agent/requirements.txt`. It was never an AEC candidate and the measurements confirm it cannot be one: on the echo fixture the APM cancels 2137× against RNNoise's 4.5×. Evidence: [F3 notes](docs/bringup/06b-f3-rnnoise.md).
 
-FastConformer ASR and FastPitch + HiFi-GAN TTS are staged independently. First prove one-file inference in a supported NVIDIA runtime and record latency, real-time factor, and peak unified RAM/VRAM on the 8 GB Orin. Only then evaluate export or TensorRT optimization where the model/runtime combination supports it. Full duplex is forbidden until AEC passes.
+ASR and TTS are staged independently, proven one file at a time, with latency, real-time factor, and peak unified RAM/VRAM recorded on the 8 GB Orin. Full duplex is forbidden until AEC passes.
+
+**ASR shipped as specified.** FastConformer CTC int8 ONNX via `sherpa-onnx`, CPU, 2 threads: RTF 0.045, WER 0.00, 324 MiB peak.
+
+**TTS shipped with a documented substitution: Matcha-TTS (text→mel) + a genuine HiFi-GAN v2 vocoder, not FastPitch.** The two-stage shape is preserved and only the acoustic model differs. FastPitch was chased to failure first: NGC serves the weights, but every version is a single `.nemo` torch checkpoint with **no ONNX and no TensorRT plan**, and loading one requires `nemo_toolkit[tts]`, which resolves to 161 packages headed by a complete **CUDA 13** wheel stack. JetPack 6 is CUDA 12.6 on a Tegra iGPU, so those wheels are the wrong CUDA generation *and* non-Tegra — they would never reach the GPU after a 3.37 GB download. Measured on hifigan_v2 at 2 threads: **first audio 349 ms, RTF 0.214, 163 MiB peak**. **HiFi-GAN v1 is unusable at RTF 1.237** (slower than real time) while being 15× larger and no better on the intelligibility round trip; re-measure before any "upgrade" to v1. Evidence: [F5 results](docs/bringup/06-voice.md).
+
+**Two F6 constraints are load-bearing and were found by measurement, not review:**
+
+* **TTS emits 22050 Hz while capture, the APM, and ASR are all 16 kHz.** The F6 reference tap that feeds playback into the APM far-end input **must resample 22050 → 16000** and account for that resampler in the delay alignment. AEC fails *silently* on a mis-rated reference, and silent AEC failure is exactly the condition that produces the feedback loop this whole front end exists to prevent.
+* **Preserve the 200 ms inter-sentence gap.** Butt-splicing synthesized sentences let one sentence's tail collide with the next sentence's plosive onset and the recognizer misheard it in 4 of 8 runs; 200 ms of silence restored 8 of 8, and 100 ms did not. F6 must keep that gap in both the playback stream and the AEC reference tap.
+
+### Measured runtime reality (2026-08-26)
+
+Probed on device in Stage G1. This subsection is the authority on what exists; where it disagrees with an aspiration elsewhere in this spec, it wins. Full evidence: [Stage G1 notes](docs/bringup/07-tensorrt-g1.md).
+
+**Installed and healthy:**
+
+| Component | Version | Note |
+| --- | --- | --- |
+| TensorRT | **10.3.0.30** | built and ran three engines with numerics verified against a NumPy recompute |
+| `trtexec` | v100300 | `/usr/src/tensorrt/bin/trtexec` — **not on the default `PATH`** |
+| CUDA toolkit | **12.6.11** | `nvcc` 12.6.68, also **not on `PATH`**; GPU arch SM 87 |
+| cuDNN | **9.3.0** | |
+
+Engine *building* peaked at about **1.5 GB RSS for a 68 KB graph**, so on 8 GB shared memory it must be budgeted separately from engine *running* — build when nothing else large is resident. The repo `.venv` was created without system site packages and cannot see the apt TensorRT bindings; the gate bridges with `PYTHONPATH=/usr/lib/python3.10/dist-packages`.
+
+**Absent, and each absence blocks something:**
+
+| Missing | Consequence |
+| --- | --- |
+| **PyTorch / torchvision** | **Hard prerequisite for G3 and G4**, which are both blocked until it exists. It cannot come from PyPI — Jetson needs NVIDIA's wheel index or a `jetson-containers` image matched to CUDA 12.6 / L4T R36. This has its own ticket, sequenced **ahead of G3/G4**. |
+| **TensorRT-LLM** | No apt package, no module, and **no Tegra aarch64 wheel** — the aarch64 wheels on `pypi.nvidia.com` are SBSA Grace-class and their TensorRT dependency fails with `TensorRT does not currently build wheels for Tegra systems`. Jetson support lives on the `v0.12.0-jetson` branch, which **targets JetPack 6.1 on AGX Orin 64 GB**, not this Orin Nano 8 GB. |
+| **AutoAWQ kernels** | **INT4 AWQ will not load on Jetson aarch64.** TensorRT 10.3 does expose `DataType.INT4`, but that is weight-only quantization driven by explicit Q/DQ nodes in an ONNX graph — not an AWQ checkpoint loader, and it provides no LLM serving layer. Re-quantizing on-device is also out with no PyTorch, `transformers`, or `modelopt`. |
+| `onnxruntime` (Python) | The voice stack runs ORT on **CPU** via the copy `sherpa-onnx` vendors, which has no CUDA, cuDNN, or TensorRT linkage at all. Stage F numbers are CPU floors, not ceilings. |
+| OpenCV in `.venv` | `save_frame()` falls back to uncompressed PPM. Install the `.[vision]` extra. |
+
+**Stage G is rescoped from "build three TensorRT engines" to "stand up a runtime that can execute these models at all,"** with TensorRT export as a separate later optimization. None of the three named models is published as a TensorRT engine:
+
+* **G2 — Qwen2.5-VL-3B.** The decided path is **llama.cpp + GGUF**: a ~2.0 GB Q4 text backbone plus a **mandatory ~1.25 GB F16 `mmproj` vision encoder**, which is not quantizable without visible degradation, with the vision tower loaded on demand. A **CUDA-enabled llama.cpp for Tegra must be compiled locally** — no llama.cpp binary exists on this host — and vision support for this architecture has needed recent or forked llama.cpp, so pin and verify the build. Against ~4.8–5.3 GB available it fits, but **the real risk is co-residency with the voice stack on 8 GB shared memory, not the weights themselves.**
+* **G3 — smolvla.** Ships **PyTorch safetensors** (~450M params) via LeRobot's `SmolVLAPolicy`, with **no published ONNX export or TensorRT engine**. Note that **the `smolvla-jetbot` fine-tune named in earlier revisions of this spec does not exist** — only `lerobot/smolvla_base` does, and a JetBot fine-tune is future work. ~0.9 GB in BF16, so it fits comfortably once torch exists. Dummy motor-token I/O only, no PWM.
+* **G4 — llama-nemotron-embed-vl-1b-v2.** Real, but ships HF safetensors with no published engine, and **the "1b" is misleading: it is ~1.7B params, so FP16 weights are ~3.4 GB**, not ~2 GB. NVIDIA's optimized path is a NeMo Retriever NIM, which is x86-first and not a drop-in on Tegra. For Stage I memory, seriously consider a smaller text-only embedder — a 1.7B multimodal encoder is a heavy choice for a board that must also hold a VLM and the voice stack.
 
 ---
 
@@ -66,15 +106,15 @@ jetbot_agent/
 │
 ├── audio/                      # Voice Subsystem
 │   ├── __init__.py
-│   ├── audio_preprocessor.py   # WebRTC APM AEC/NS/AGC/HPF/VAD; optional RNNoise
-│   ├── fastconformer_asr.py    # NVIDIA FastConformer ASR runtime adapter
-│   └── fastpitch_hifigan_tts.py # NVIDIA FastPitch + HiFi-GAN TTS adapter
+│   ├── audio_preprocessor.py   # WebRTC APM AEC/NS/AGC/HPF/VAD (RNNoise rejected in F3)
+│   ├── fastconformer_asr.py    # FastConformer ASR adapter (int8 ONNX via sherpa-onnx)
+│   └── fastpitch_hifigan_tts.py # TTS adapter — Matcha-TTS mel + HiFi-GAN v2 vocoder
 │
-├── engine/                     # TensorRT-Edge-LLM & Model Execution
+├── engine/                     # Model execution — llama.cpp/GGUF for the VLM, PyTorch for the rest
 │   ├── __init__.py
-│   ├── trt_llm_vlm.py          # C++ wrapper for Qwen2.5-VL-3B (INT4 AWQ)
-│   ├── trt_vla_motor.py        # TensorRT engine launcher for smolvla-jetbot
-│   └── trt_embedder.py         # llama-nemotron-embed-vl-1b-v2 engine wrapper
+│   ├── trt_llm_vlm.py          # Qwen2.5-VL-3B via llama.cpp + GGUF (Q4 backbone + F16 mmproj)
+│   ├── trt_vla_motor.py        # smolvla policy launcher — PyTorch safetensors, no engine published
+│   └── trt_embedder.py         # llama-nemotron-embed-vl-1b-v2 (~1.7B, ~3.4 GB FP16) wrapper
 │
 ├── memory/                     # 3-Tier Multimodal Memory Engine
 │   ├── __init__.py
@@ -108,9 +148,9 @@ Live procedures: [`docs/bringup/README.md`](docs/bringup/README.md). Issues: [`T
 | C | IMX219 CSI / Argus | I3 uses camera |
 | D | Waveshare SSS1629 ALSA (name, not card index; sidetone off) | — |
 | E | `jetbot_agent` import skeleton | — |
-| F | WebRTC APM, optional RNNoise, FastConformer, FastPitch+HiFi-GAN, duplex | I6 waits on F4/F5/F6 |
-| G | TensorRT engines, dummy I/O only | I5 smolvla + I7 wait on G |
+| F | WebRTC APM, FastConformer, Matcha+HiFi-GAN TTS, duplex (RNNoise rejected) | I6 waits on F4/F5/F6 |
+| G | Model runtimes, dummy I/O only. **PyTorch install comes first**, then llama.cpp/GGUF VLM | I5 smolvla + I7 wait on G |
 | **H** | **Agent integration** | **I1 harness → I2 safe tools → I3 vision → I4 search → I5 nav dummy → I6 voice → I7 VLM → I8 `main.py`** |
 | **I** | **Memory (Chroma + SQLite)** | Memory tools *after* this stage |
 
-Voice stack: **FastConformer** ASR, **FastPitch + HiFi-GAN** TTS, **WebRTC APM** front end, optional **RNNoise**. Identify the USB sound device by ALSA name, never a fixed card index.
+Voice stack: **FastConformer** ASR, **Matcha-TTS + HiFi-GAN v2** TTS, **WebRTC APM** front end (required; **RNNoise rejected in F3**). Identify the USB sound device by ALSA name, never a fixed card index.

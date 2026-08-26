@@ -11,6 +11,29 @@ Hard rules ([`docs/safety.md`](../safety.md), [`docs/architecture.md`](../archit
 - `config/robot.yaml` stays `backend: mock` until Stage B is signed off; I5 starts dummy even after B.
 - Internet tool output is data, never system policy.
 
+## Progress — I1–I5 landed 2026-08-26
+
+Each slice below is pure software: no model is loaded, no camera or ALSA device is opened by the test suite, no I2C transaction happens, nothing reaches a real `/cmd_vel`, and `config/robot.yaml` stays `backend: mock`.
+
+| Ticket | State | Design notes (evidence records) |
+| --- | --- | --- |
+| I1 harness state machine | **Done** | [09-agent-i1-i2.md](09-agent-i1-i2.md) |
+| I2 tool interface + safety | **Done** | [09-agent-i1-i2.md](09-agent-i1-i2.md) |
+| I3 vision tools | **Done** (OCR/grounding refuse, see below) | [09c-agent-i3-i4.md](09c-agent-i3-i4.md) |
+| I4 search tools | **Done** (registers, refuses without a key) | [09c-agent-i3-i4.md](09c-agent-i3-i4.md) |
+| I5 navigation tools + motion adapter | **Done** | [09b-agent-i5-navigation.md](09b-agent-i5-navigation.md) |
+| I6 voice tools | Open — needs F6 for duplex | — |
+| I7 VLM / engine tools | Open — needs [Stage G](07-tensorrt.md) | — |
+| I8 integration loop | Open | — |
+
+Three decisions worth carrying forward:
+
+- **I2's boundary is structural, not advisory.** Tools receive a `ToolContext` whose `motion` field is validated, so a `MotorDriver`, a `DiffDriveController`, or a raw I2C handle is rejected at construction, and an AST scan in `tests/unit/test_tool_safety.py` fails the build if any module in the tool package imports a motor, GPIO, or SMBus symbol. The rule holds even if a future tool author forgets it exists.
+- **I3's OCR and visual grounding raise `StageNotReady` instead of returning placeholders**, which is a deliberate departure from the ticket's "placeholder OCR/grounding" wording. The harness cannot distinguish an invented string from a read one, so a fabricated caption or bounding box would propagate into a decision and eventually into motion. Both declare real bounded schemas and refuse until the [Stage G](07-tensorrt.md) VLM runtime exists.
+- **Two environment gaps are recorded rather than worked around:** `api.tavily.com` is unreachable from this Jetson (connection reset), and OpenCV is absent from `.venv`, so frame saves fall back to uncompressed PPM and report the path actually written. Install the `.[vision]` extra to get JPEG.
+
+Tests live in `tests/unit/` (that is what `pyproject.toml` sets as `testpaths`), not the `tests/agent/…` paths some ticket bodies name.
+
 ## I1 — Hermes harness skeleton / state machine (no tools)
 
 Implement `jetbot_agent/agent/hermes_harness.py` as a deterministic state machine only: idle → (optional listen) → think → act → speak → stop. No tool registry, no camera, no motors, no network.
@@ -54,7 +77,7 @@ Wire ASR/TTS tools only after the matching F gates. Do **not** open duplex from 
 | Voice code | Minimum F gate | If not ready |
 | --- | --- | --- |
 | One-shot listen (ASR) | F4 FastConformer | No-op stub; do not claim transcripts |
-| One-shot speak (TTS) | F5 FastPitch + HiFi-GAN | No-op stub; sequential ALSA only after F1, sidetone off |
+| One-shot speak (TTS) | F5 Matcha-TTS + HiFi-GAN v2 | No-op stub; sequential ALSA only after F1, sidetone off |
 | Duplex / barge-in | **F6** (needs F2 AEC) | Forbidden; sequential capture-then-playback only |
 
 If F1–F4 are still open, keep I6 as documented stubs and continue I1–I5/I7/I8.

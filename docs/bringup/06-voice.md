@@ -51,6 +51,27 @@ Record speech quality, residual noise, end-to-end latency, resampler cost, CPU l
 
 Pass: reproducible A/B artifacts and measurements exist; adopting or rejecting RNNoise is documented. This gate is not required for F4 or F5.
 
+### Result 2026-08-26 — PASS, verdict REJECT
+
+Gate: `./scripts/bringup/f3_rnnoise_ab.sh`. Full A/B tables, install path, and fixture design: **[06b-f3-rnnoise.md](06b-f3-rnnoise.md)**.
+
+**DROP RNNoise. WebRTC APM stays the required and only front end, and RNNoise is not pinned in `jetbot_agent/requirements.txt`.**
+
+RNNoise is the better *denoiser* on every signal metric and still makes the robot **worse at hearing**:
+
+| Metric | APM alone | APM + RNNoise |
+| --- | --- | --- |
+| Noise reduction | 8.2× | **270×** |
+| Segmental SNR | +0.76 dB | **+4.97 dB** |
+| **FastConformer WER, real noisy speech** | **0.006** | **0.253** ✗ |
+| WER on the fan-hum + motor-whine fixture | — | **0.889** ✗ |
+| CPU | 1× | 15× |
+| Added buffering delay | — | ~52 ms |
+
+That worst fixture is the one that most resembles this robot's actual noise floor. This is the textbook denoiser failure mode, measured rather than assumed: perceptual metrics improve while the acoustic model's input distribution is destroyed. The APM alone is both cheaper and more accurate, so there is no tradeoff to weigh.
+
+**RNNoise was never a candidate to replace AEC and the measurements confirm it cannot be one:** on the F2 echo fixture the APM cancels 2137× against RNNoise's 4.5×.
+
 ## F4 — NVIDIA FastConformer ASR
 
 Install a Jetson-compatible NVIDIA FastConformer model/runtime independently of the production agent. Transcribe one known 16 kHz mono WAV, first without APM and then with the F2 output where useful.

@@ -27,10 +27,14 @@ Staged **install-and-test** on this Orin (one gate at a time): **[`TASKBOARD.md`
 - [x] Stage D audio HW (Waveshare SSS1629; ALSA **name** not card index; sidetone **off**)
 - [x] Stage E Python skeleton (`.venv` via `virtualenv`; PyYAML 6.0.3; import smoke pass)
 - [x] Stage F2 WebRTC APM (`pywebrtc-audio` 0.1.0; offline NS/AEC fixtures; no live duplex)
+- [x] Stage F3 RNNoise A/B — **rejected**; it denoises better and hears worse (ASR WER 0.006 → 0.253), so WebRTC APM stays the only front end
 - [x] Stage F4 FastConformer ASR (NeMo CTC int8 ONNX via `sherpa-onnx` 1.13.6, CPU; RTF 0.045 @ 2 threads, WER 0.00, 324 MiB peak)
-- [ ] Stage F5 FastPitch/HiFi-GAN TTS (optional F3 RNNoise; F6 duplex after AEC+ASR+TTS)
-- [ ] Stage G TensorRT dummy engines
-- [ ] Stage H agent I1–I8 (harness, safe tools, vision, Tavily, nav dummy, voice, VLM, `main.py`)
+- [x] Stage F5 TTS — Matcha-TTS mel + HiFi-GAN v2 vocoder (substituted for FastPitch, which has no ONNX on NGC); 349 ms first audio, RTF 0.214, 163 MiB peak; one low-volume `aplay` still owed
+- [ ] Stage F6 duplex after AEC+ASR+TTS — the AEC reference tap must resample 22050 → 16000 Hz and keep F5's 200 ms inter-sentence gap
+- [x] Stage G1 TensorRT runtime (10.3.0.30 / CUDA 12.6.11 / cuDNN 9.3.0; three engines built and numerically verified)
+- [ ] Stage G runtimes — **PyTorch install first**, then Qwen2.5-VL via **llama.cpp + GGUF**, then smolvla and the Nemotron embedder
+- [x] Stage H I1–I5 (harness state machine, structural tool-safety boundary, vision, Tavily search, nav dummy + motion adapter)
+- [ ] Stage H I6–I8 (voice tools after F6, VLM tools after G, `main.py` loop)
 - [ ] Stage I memory (after agent); memory tools after that
 
 ```bash

@@ -1,6 +1,6 @@
 # Task board — JetBot Orin Super staged bring-up
 
-GitHub Project (v2): **not created** — the `gh` token is missing the `project` and `read:project` scopes. Run `gh auth refresh -s project,read:project` to enable it. Tracking currently runs on milestones + labels: [milestones](https://github.com/AbuAyah110/jetbot-orin-super/milestones) · [issues](https://github.com/AbuAyah110/jetbot-orin-super/issues)
+GitHub Project (v2): **[JetBot Orin Super bring-up](https://github.com/users/AbuAyah110/projects/2)** — created; the `gh` token now carries the `project` scope. Also tracked by milestones + labels: [milestones](https://github.com/AbuAyah110/jetbot-orin-super/milestones) · [issues](https://github.com/AbuAyah110/jetbot-orin-super/issues)
 
 Repo: [AbuAyah110/jetbot-orin-super](https://github.com/AbuAyah110/jetbot-orin-super)
 
@@ -21,9 +21,9 @@ Classic JetBot notebooks already ran for A/B/C. This pass only **re-verified** O
 | C CSI camera | Argus 1-frame pass + notebook preview |
 | D Audio | HW verified; voice models are Stage F |
 | E Python skeleton | Pass (`.venv`, import smoke) |
-| F Voice | F1, F2, F4 pass; F3 optional; F5/F6 open |
-| G TensorRT | Open |
-| H Agent I1–I8 | Open (before memory) |
+| F Voice | F1, F2, F4, F5 pass; **F3 done — RNNoise rejected**; F6 open |
+| G Model runtimes | **G1 pass**; stage rescoped, PyTorch is a new prerequisite ahead of G3/G4 |
+| H Agent I1–I8 | **I1–I5 pass**; I6 (needs F6), I7 (needs G), I8 open |
 | I Memory | Open (after I8) |
 
 ---
@@ -64,7 +64,7 @@ Notes from 2026-08-25: `nvargus-daemon` active; `gst-launch-1.0 nvarguscamerasrc
 | --- | --- |
 | Waveshare ALSA record + playback | `./scripts/bringup/test_alsa.sh` |
 
-Hardware: Waveshare / Solid State System USB PnP Audio **SSS1629**. Identify the endpoint by ALSA **USB device name**, never a hardcoded card index (`plughw:2,0` was observed once). Keep **sidetone off**. Sequential capture-then-playback until F2 AEC. Voice stack (Stage F): FastConformer + FastPitch/HiFi-GAN + WebRTC APM (+ optional RNNoise).
+Hardware: Waveshare / Solid State System USB PnP Audio **SSS1629**. Identify the endpoint by ALSA **USB device name**, never a hardcoded card index (`plughw:2,0` was observed once). Keep **sidetone off**. Sequential capture-then-playback until F2 AEC. Voice stack as shipped (Stage F): FastConformer ASR + Matcha-TTS/HiFi-GAN v2 TTS + WebRTC APM front end. RNNoise was benchmarked and **rejected**.
 
 ## Stage E — Python skeleton
 
@@ -93,11 +93,17 @@ F2 pass 2026-08-25: `pywebrtc-audio==0.1.0` offline fixtures; NS 8.2×; AEC 236�
 
 F4 pass 2026-08-25: NeMo FastConformer CTC int8 ONNX via `sherpa-onnx==1.13.6` (CPU). Offline model, 2 threads: **RTF 0.045**, warm 0.30 s on 6.6 s audio, **WER 0.00**, peak RSS **324 MiB**, swap untouched. NeMo/PyTorch deliberately not installed — no reachable JetPack-6 torch wheel; ONNX path chosen instead. Streaming 80 ms model also runs (RTF 0.339) and is reserved for F6. Still owed: a mic-captured utterance, and a 4-thread sweep on an idle board (the board had ~2 cores of foreign load). See [docs/bringup/06-voice.md](docs/bringup/06-voice.md).
 
+F3 done 2026-08-26 — **verdict: REJECT RNNoise.** `pyrnnoise==0.4.3` aarch64 wheel, `--no-deps`. RNNoise denoises far better (270× vs the APM's 8.2×, +4.97 dB vs +0.76 dB segmental SNR) and makes the robot **worse at hearing**: FastConformer WER on real noisy speech goes **0.006 → 0.253**, peaking at **0.889** on the fan-hum + motor-whine fixture that most resembles this robot's noise floor, at 15× the CPU and ~52 ms extra delay. WebRTC APM stays the only front end; do not pin RNNoise. See [docs/bringup/06b-f3-rnnoise.md](docs/bringup/06b-f3-rnnoise.md).
+
+F5 pass 2026-08-26, **with a documented substitution: Matcha-TTS mel + genuine HiFi-GAN v2 vocoder, not FastPitch.** NGC serves FastPitch weights only as a single `.nemo` torch checkpoint — no ONNX, no TensorRT plan — and loading one needs `nemo_toolkit[tts]`, which resolves to 161 packages and a **CUDA 13** wheel stack (wrong CUDA generation for JetPack 6's 12.6, and non-Tegra). Measured on hifigan_v2 @ 2 threads, CPU: **first audio 349 ms, RTF 0.214, peak RSS 163 MiB**. HiFi-GAN **v1 is unusable at RTF 1.237**. Intelligibility measured by round-tripping each WAV through the F4 recognizer (CER 0.000–0.012). Still owed: **one low-volume `aplay`** — `/dev/snd` is not exposed to the sandbox. See [docs/bringup/06-voice.md](docs/bringup/06-voice.md).
+
+**F6 must handle two measured constraints:** TTS emits 22050 Hz while capture/APM/ASR are 16 kHz, so the AEC reference tap **must resample 22050 → 16000** and account for the resampler in delay alignment — AEC fails *silently* on a mis-rated reference. And keep F5's **200 ms inter-sentence gap** in both the playback stream and the reference tap; butt-splicing sentences corrupted recognition in 4 of 8 runs.
+
 I6 (agent voice tools) may one-shot after F4/F5; **duplex tools wait for F6**. If F1–F4 are open, I6 stays a stub.
 
 ### Stage F issue bodies
 
-Use these bodies verbatim if the GitHub issues/project do not exist yet:
+These are the **original bodies as filed**, kept for provenance. Where they disagree with the Stage F results above, the results win — in particular F3 rejected RNNoise, F5 substituted Matcha-TTS for FastPitch, and "TensorRT-Edge-LLM" was never a real product (see [Stage G](#stage-g--model-runtimes-isolated)).
 
 **F1: Identify SSS1629 ALSA device and establish safe mixer baseline**
 
@@ -135,14 +141,21 @@ Use these bodies verbatim if the GitHub issues/project do not exist yet:
 >
 > Gate: repeated turn-taking/interruption tests complete without feedback, runaway volume, clipping, stale-reference operation, or unbounded queues. Attach end-to-end latency, watchdog evidence, and combined peak unified RAM/VRAM with measured 8 GB headroom.
 
-## Stage G — TensorRT (isolated)
+## Stage G — model runtimes (isolated)
 
-| Issue | Verify |
-| --- | --- |
-| TensorRT / Edge-LLM runtime present | `./scripts/diagnostics.sh` TensorRT section |
-| Qwen2.5-VL-3B INT4 dummy forward | dummy I/O, no camera loop |
-| smolvla-jetbot dummy I/O (no PWM) | dummy I/O |
-| Nemotron embed dummy vector | dummy I/O |
+Rescoped 2026-08-26 from "build three TensorRT engines" to "stand up a runtime that can execute these models at all." **None of the three named models is published as a TensorRT engine**, and two need PyTorch, which is not installed. Details: [docs/bringup/07-tensorrt.md](docs/bringup/07-tensorrt.md) · evidence: [07-tensorrt-g1.md](docs/bringup/07-tensorrt-g1.md).
+
+| Issue | Verify | State |
+| --- | --- | --- |
+| G1 TensorRT runtime present | `./scripts/bringup/g1_tensorrt_smoke.sh` | **Pass** |
+| **G1a install PyTorch (JetPack 6 / CUDA 12.6 aarch64)** | `import torch`, `torch.cuda.is_available()` | **Prerequisite — ahead of G3/G4** |
+| G2 Qwen2.5-VL-3B **via llama.cpp + GGUF** dummy forward | dummy I/O, no camera loop | Open |
+| G3 smolvla dummy motor-token I/O (no PWM) | dummy I/O | Blocked on G1a |
+| G4 Nemotron embed dummy vector | dummy I/O | Blocked on G1a |
+
+G1 pass 2026-08-26: TensorRT **10.3.0.30**, CUDA **12.6.11**, cuDNN **9.3.0**. The gate went past reporting a version and built three engines from a 68 KB ONNX graph verified against a NumPy recompute — `trtexec` FP32 build 1.82 s, 121.3 KB engine, **0.0415 ms** median, max rel. err **1.7e-06**; Python API 3.80 s / 0.1141 ms. **The builder peaked ~1.5 GB RSS for a 68 KB graph**, so engine building must be budgeted separately from running. `trtexec` and `nvcc` are installed but **not on `PATH`**, and the `.venv` needs a `PYTHONPATH` bridge to see the apt TensorRT bindings.
+
+**Corrections to the old spec, all measured:** there is **no NVIDIA product called "TensorRT Edge-LLM"** — the nearest real thing, TensorRT-LLM, is **absent with no Tegra aarch64 wheel** (the `v0.12.0-jetson` branch targets AGX Orin 64 GB). **INT4 AWQ will not load** — AutoAWQ kernels are unavailable on Jetson aarch64. The **`smolvla-jetbot` fine-tune named in the spec does not exist**; only `lerobot/smolvla_base` does. The embedder's **"1b" is really ~1.7B params (~3.4 GB FP16)**. G2's real risk is **co-residency with the voice stack on 8 GB**, not the weights: ~2.0 GB Q4 backbone + a mandatory ~1.25 GB F16 `mmproj` vision tower, and a CUDA-enabled llama.cpp for Tegra must be **compiled locally**.
 
 I7 (VLM/engine tools) starts only after these dummy tickets.
 
@@ -160,6 +173,18 @@ Implement I1–I8 as **separate issues**. Do not open Stage I memory until I8’
 | I6: Voice tools (after F5/F6; stub if F1–F4 open) | No duplex until F6; one-shot ASR/TTS only after F4/F5 |
 | I7: VLM/engine tools (after Stage G) | Dummy VLM/engine forward; no PWM |
 | I8: Integration loop in main.py | One scripted episode; memory tools not wired |
+
+### Stage H results
+
+**I1–I5 pass 2026-08-26**, all pure software: no model loaded, no camera or ALSA device opened by the test suite, no I2C transaction, nothing to a real `/cmd_vel`, `backend: mock` throughout. Suite is **262 passed, 1 skipped**. Design notes: [09-agent-i1-i2.md](docs/bringup/09-agent-i1-i2.md) · [09b-agent-i5-navigation.md](docs/bringup/09b-agent-i5-navigation.md) · [09c-agent-i3-i4.md](docs/bringup/09c-agent-i3-i4.md).
+
+Three things differ from the ticket bodies, deliberately:
+
+- **I2's safety boundary is structural.** A `MotorDriver`, `DiffDriveController`, or raw I2C handle is rejected at `ToolContext` construction, and an AST scan in `tests/unit/test_tool_safety.py` fails the build if any tool module imports a motor, GPIO, or SMBus symbol.
+- **I3 ships no placeholder OCR or grounding.** #22 asked for placeholders; both tools raise `StageNotReady` instead, because the harness cannot tell an invented string from a read one and a fabricated caption or box would propagate into a decision and eventually into motion. They wait on the Stage G VLM runtime.
+- **Tests live in `tests/unit/`**, which is what `pyproject.toml` sets as `testpaths`, not the `tests/agent/…` paths I3/I4 name.
+
+Two environment gaps recorded rather than worked around: **`api.tavily.com` is unreachable from this Jetson** (connection reset), so I4 is registrable but unexercised live; and **OpenCV is absent from `.venv`**, so frame saves fall back to uncompressed PPM and report the path actually written — install the `.[vision]` extra for JPEG.
 
 ### Stage H issue bodies
 

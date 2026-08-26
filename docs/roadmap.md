@@ -17,7 +17,7 @@ Full plan: [`PROJECT_PLAN.md`](../PROJECT_PLAN.md).
 | M6 | Robot MCP | Planned |
 | M7 | Hermes + Cosmos | Planned |
 | M8 | Qwen3.5-0.8B executive | Planned |
-| M9 | Voice (WebRTC APM / FastConformer / FastPitch + HiFi-GAN) | Planned |
+| M9 | Voice (WebRTC APM / FastConformer / Matcha-TTS + HiFi-GAN v2) | F1–F5 done; F6 duplex open |
 | M10 | Sensors + Nav2 | Planned (needs encoders/IMU/range) |
 | M11 | Web research | Planned |
 | M12 | Proactive event loop | Planned |

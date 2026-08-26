@@ -1,11 +1,10 @@
 # Stage H / I3–I4 — vision tools and web search
 
-Design notes for the third and fourth Stage H slices. **This file should be folded
-into [`08-agent.md`](08-agent.md) alongside
-[`09-agent-i1-i2.md`](09-agent-i1-i2.md) and
-[`09b-agent-i5-navigation.md`](09b-agent-i5-navigation.md) once I3–I8 land**; it
-exists separately so I3/I4 can be reviewed without touching the Stage doc other
-agents are editing.
+Design notes for the third and fourth Stage H slices. **This is the I3/I4
+evidence record.** The progress table and the decisions that outlive the slices
+are folded into [`08-agent.md`](08-agent.md), which is the doc to read first;
+the per-tool state, the refusal rationale, and the network/OpenCV findings stay
+here.
 
 Scope: pure software on top of the I2 tool contract. No model is downloaded or
 loaded, no CSI sensor is opened by the test suite, no I2C transaction happens, and
