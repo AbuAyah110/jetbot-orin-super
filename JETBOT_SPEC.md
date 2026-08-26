@@ -16,7 +16,7 @@ Master specification for the **Autonomous Evolving JetBot** built on the **NVIDI
 | Safety | Direct I2C in the final tree | LLMs never PWM; `/cmd_vel` + limits ([`docs/architecture.md`](docs/architecture.md)) |
 | Models | TensorRT-Edge-LLM Qwen2.5-VL-3B, smolvla, Nemotron embed | llama.cpp Cosmos, Qwen3.5-0.8B, EmbeddingGemma |
 | Voice | FastConformer ASR; FastPitch + HiFi-GAN TTS; WebRTC APM front end | Stage F stubs only |
-| Swap | 32 GB `/swapfile`, `vm.swappiness=10` | This Jetson: 32 GiB `/ssd/32GB.swap`, swappiness 60 |
+| Swap | 32 GB `/swapfile`, `vm.swappiness=10` | This Jetson: 32 GiB `/ssd/32GB.swap`, swappiness 60 — **adopt the as-is column**, see [Stage A notes](docs/bringup/01-os.md) |
 
 **Bring-up rule:** probe I2C buses **1 and 7** and record the real address map. Do not assume `0x40` until it appears. Wheel tests only with wheels off the ground; every motion script must hard-stop on timeout.
 
@@ -26,7 +26,7 @@ Master specification for the **Autonomous Evolving JetBot** built on the **NVIDI
 
 * **Compute Unit:** NVIDIA Jetson Orin Nano Super (8 GB LPDDR5 Unified Memory)
 * **Storage:** 1 TB NVMe SSD mounted as primary Root (`/`)
-* **Virtual Memory:** 32 GB NVMe swap (`/swapfile` + `vm.swappiness=10` in spec; this board currently uses `/ssd/32GB.swap`, swappiness 60 — see Stage A notes)
+* **Virtual Memory:** 32 GB NVMe swap. The board uses `/ssd/32GB.swap` with `vm.swappiness=60`; this spec originally called for `/swapfile` with `vm.swappiness=10`. **Keep the board as it is and amend this spec** — the swap is already the right size on the right device and is in `fstab`, and re-running `scripts/setup_swap.sh` would add a second 32 GiB file plus a duplicate `fstab` entry. See [Stage A notes](docs/bringup/01-os.md).
 * **Operating System:** Headless JetPack 6.x / 7.x (GUI disabled: `sudo systemctl set-default multi-user.target`)
 * **Vision Sensor:** Raspberry Pi Camera v2.1 (IMX219) on CSI Port 0 (connected via 15-to-22 pin FPC adapter cable)
 * **Audio Hardware:** Waveshare USB to Audio Module (SSS1629 ALSA codec)

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Disable GUI to free up more RAM
-sudo systemctl set-default multi-user
+sudo systemctl set-default multi-user.target
 
 # Disable ZRAM
 sudo systemctl disable nvzramconfig.service
