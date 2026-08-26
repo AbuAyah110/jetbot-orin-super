@@ -10,14 +10,43 @@ Probed on device 2026-08-26.
 > doc. [JETBOT_SPEC.md](../../JETBOT_SPEC.md) §"Measured runtime reality"
 > carries the same conclusions.
 
+> ## Correction (2026-08-26) — one conclusion below was wrong
+>
+> This record originally concluded that **"there is no NVIDIA product called
+> 'TensorRT Edge-LLM.'"** That is **false**, and the error propagated into
+> `07-tensorrt.md`, `docs/bringup/README.md`, `JETBOT_SPEC.md`, `TASKBOARD.md`,
+> and GitHub issues [#16](https://github.com/AbuAyah110/jetbot-orin-super/issues/16)
+> and [#17](https://github.com/AbuAyah110/jetbot-orin-super/issues/17).
+>
+> [`NVIDIA/TensorRT-Edge-LLM`](https://github.com/NVIDIA/TensorRT-Edge-LLM) is a
+> real, active, Apache-2.0 NVIDIA project, latest release **v0.10.0**
+> (2026-08-12). It is **a different project from TensorRT-LLM.** This gate's
+> search for `*tensorrt_llm*` / `*edge*llm*` on disk was sound and its result was
+> reported accurately — but the absence of a `tensorrt_llm` package says nothing
+> about Edge-LLM, and the absence of an `*edge*llm*` path says nothing either:
+> Edge-LLM has no wheel and no apt package, only a local CMake source build, so
+> "not on disk" is its expected pre-install state.
+>
+> **This board is on Edge-LLM's Official Support Matrix** (Jetson Orin /
+> JetPack 6.2+ / CUDA 12.6, `Compatible`), **Orin Nano 8 GB is a benchmarked
+> platform**, **Qwen2.5-VL-3B-Instruct is a supported model**, and **INT4 AWQ is
+> valid on all platforms**. `JETBOT_SPEC.md`'s original runtime name was right.
+>
+> **Everything this document measures remains valid** — TensorRT 10.3.0.30
+> healthy, the ~1.5 GB builder peak, no PyTorch, the `.venv` binding gap, the
+> sandbox/GPU limitation, and the memory-headroom figures. Only the *inference*
+> about the runtime's existence, and the G2 reasoning that depended on it, are
+> retracted. Inline corrections are marked below; the replacement analysis is in
+> **[07b-tensorrt-edge-llm.md](07b-tensorrt-edge-llm.md)**.
+
 **Headline: base TensorRT is installed, healthy, and passed a real
-end-to-end engine build + inference. TensorRT-LLM is not installed, and there
-is no NVIDIA product called "TensorRT Edge-LLM." No PyTorch is installed
-anywhere on this board.** G2/G3/G4 as originally written could not be executed
-by what is here, so the spec and [07-tensorrt.md](07-tensorrt.md) have since
-been reconciled: Stage G is rescoped to standing up runtimes, the VLM path is
-llama.cpp + GGUF, and PyTorch became its own prerequisite ticket ahead of
-G3/G4.
+end-to-end engine build + inference. TensorRT-LLM is not installed. No PyTorch
+is installed anywhere on this board.** G2/G3/G4 as originally written could not
+be executed by what is here, so the spec and [07-tensorrt.md](07-tensorrt.md)
+have since been reconciled: Stage G is rescoped to standing up runtimes, the
+first VLM gate goes through llama.cpp + GGUF, and PyTorch became its own
+prerequisite ticket ahead of G3/G4. TensorRT Edge-LLM — the spec's original
+runtime, and a real one — is tracked as G5.
 
 Reproduce with:
 
@@ -76,7 +105,7 @@ Stage E change and would disturb in-flight Stage F work.
 | Thing | Status |
 | --- | --- |
 | **TensorRT-LLM** | **absent** — no apt package, no Python module, nothing on disk |
-| "TensorRT Edge-LLM" | **does not exist as an NVIDIA product** under that name |
+| **TensorRT Edge-LLM** (`tensorrt_edgellm`) | **absent, as expected** — it is a source build, not a wheel or apt package. ~~does not exist as an NVIDIA product~~ **(corrected 2026-08-26: it is a real NVIDIA project and this board is on its support matrix — see [07b](07b-tensorrt-edge-llm.md))** |
 | PyTorch / torchvision | **absent in both interpreters** |
 | Python `onnxruntime` | absent in both interpreters |
 | `onnx` | absent; G1 installs it into a repo-local dir (see below) |
@@ -221,7 +250,34 @@ not installed.** Base TensorRT being healthy does not carry Stage G.
 
 ### G2 — Qwen2.5-VL-3B INT4 AWQ
 
-**Not feasible as specified.** The runtime named in the spec is not here.
+> **Corrected 2026-08-26.** This section's verdict — "not feasible as specified"
+> — was built on the false premise that the spec named a non-existent runtime.
+> It did not. **TensorRT Edge-LLM is real, this board is on its support matrix,
+> Qwen2.5-VL-3B-Instruct-AWQ is a supported checkpoint, and INT4 AWQ is its
+> recommended precision for Orin.** The correct verdict is *"feasible on the
+> spec's own path, gated on PyTorch for the ONNX export and on a `sm_87`/CUDA-12
+> CuTe DSL kernel artifact that upstream does not ship."*
+> See **[07b-tensorrt-edge-llm.md](07b-tensorrt-edge-llm.md)**.
+>
+> Two specific claims below are retracted:
+> - **"INT4 AWQ specifically will not load."** True of **AutoAWQ**, whose
+>   GEMM/Triton kernels are unavailable on Jetson aarch64. Edge-LLM does not use
+>   AutoAWQ — it consumes AWQ checkpoints in its own exporter and emits an
+>   `Int4GroupwiseGemmPlugin` engine. The AutoAWQ observation was accurate; the
+>   generalisation to "INT4 AWQ is off the table on this board" was not.
+> - **"Build TensorRT-LLM `v0.12.0-jetson` from source ... only worth it if the
+>   spec's C++ runtime is a hard requirement."** TensorRT-LLM was never the
+>   spec's C++ runtime. Edge-LLM is, and it needs no multi-hour TensorRT-LLM
+>   build.
+>
+> What remains accurate: TensorRT-LLM is genuinely absent with no Tegra wheel,
+> plain TensorRT 10.3's `INT4` flag is genuinely just ONNX Q/DQ weight-only
+> quantization with no serving layer, and llama.cpp is genuinely the shortest
+> path to a first passing gate. The memory envelope below is superseded by the
+> Orin Nano 8 GB figures in 07b.
+
+**Not feasible via TensorRT-LLM.** The analysis below concerns TensorRT-LLM,
+which is not the runtime the spec named.
 
 - TensorRT-LLM is not installed, and NVIDIA publishes **no Tegra aarch64 wheel**.
   The aarch64 wheels on `pypi.nvidia.com` are SBSA (Grace-class servers); their
@@ -299,10 +355,14 @@ has to hold a VLM and the voice stack in 8 GB.
 
 ## Spec mismatches to resolve
 
-1. **"NVIDIA TensorRT Edge-LLM (C++ Runtime)" is not a real product name.** The
-   nearest real thing is TensorRT-LLM, and it is not installed. The spec and
-   `07-tensorrt.md` ticket 1 ("TensorRT-Edge-LLM runtime present") should be
-   renamed and rescoped.
+1. ~~**"NVIDIA TensorRT Edge-LLM (C++ Runtime)" is not a real product name.**~~
+   **Retracted 2026-08-26 — this was the error.** It *is* a real product name:
+   [`NVIDIA/TensorRT-Edge-LLM`](https://github.com/NVIDIA/TensorRT-Edge-LLM),
+   Apache-2.0, v0.10.0. It is not TensorRT-LLM, and the spec was right. **There
+   is no spec mismatch here to resolve.** The real mismatch is narrower and
+   still open: Edge-LLM is not *installed*, its ONNX export needs PyTorch, and
+   its `sm_87`/CUDA-12 CuTe DSL artifact is not published — tracked as G5. See
+   [07b-tensorrt-edge-llm.md](07b-tensorrt-edge-llm.md).
 2. **"NeMo TensorRT Engines" is not an installed capability.** Only base TensorRT
    10.3 is installed. There is no NeMo, no TensorRT-LLM, and no ONNX/TensorRT
    export of any of the three named models. `JETBOT_SPEC.md` §1 already hedges
@@ -331,8 +391,13 @@ command in the ticket, was not the vehicle: G1 used
 `scripts/bringup/g1_tensorrt_smoke.sh`, which goes considerably further. Wiring
 the diagnostics script to surface these same fields is a small follow-up.
 
-The **"TensorRT-Edge-LLM runtime present"** half of the ticket is **not met and
-cannot be met by installation alone** — see the mismatches above.
+The **"TensorRT-Edge-LLM runtime present"** half of the ticket is **not met** —
+`tensorrt_edgellm` is not installed and its C++ runtime is not built. *Corrected
+2026-08-26:* this record originally said it "cannot be met by installation alone"
+because the product did not exist. It does exist, and it **can** be met by
+installation — the work is a local CMake source build plus a CPU-only ONNX
+export, both on-matrix for this board. Tracked as G5; see
+[07b-tensorrt-edge-llm.md](07b-tensorrt-edge-llm.md).
 
 One follow-up before this is folded into `07-tensorrt.md`: re-run
 `./scripts/bringup/g1_tensorrt_smoke.sh` to regenerate `g1_runtime.json` with the

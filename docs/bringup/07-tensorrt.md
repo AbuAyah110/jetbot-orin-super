@@ -2,9 +2,12 @@
 
 Do not connect any runtime to motors or the camera loop until each dummy-I/O ticket passes.
 
-This stage was originally written as "build three TensorRT engines." **It has been rescoped to "stand up a runtime that can execute these models at all,"** with TensorRT export as a separate later optimization. The reason is measured, not editorial: base TensorRT is healthy, but **none of the three models named for G2/G3/G4 is published as a TensorRT engine**, and two of them need PyTorch, which is not installed.
+This stage was originally written as "build three TensorRT engines." **It has been rescoped to "stand up a runtime that can execute these models at all,"** with TensorRT export as a separate later optimization. The reason is measured, not editorial: base TensorRT is healthy, but **none of the three models named for G2/G3/G4 ships as a prebuilt TensorRT engine**, and all three need PyTorch, which is not installed.
+
+The rescope holds, but note the sequencing it implies is *not* "TensorRT is a dead end for the VLM." For G2 specifically, NVIDIA's **TensorRT Edge-LLM** does build Qwen2.5-VL-3B INT4 AWQ engines on this board class from a Hugging Face checkpoint — see the correction below and **[07b-tensorrt-edge-llm.md](07b-tensorrt-edge-llm.md)**. llama.cpp is the faster path to a first passing gate; Edge-LLM is the higher-performance destination.
 
 Full inventory, smoke-test numbers, and per-model feasibility analysis: **[07-tensorrt-g1.md](07-tensorrt-g1.md)**.
+TensorRT Edge-LLM support-matrix evaluation: **[07b-tensorrt-edge-llm.md](07b-tensorrt-edge-llm.md)**.
 
 ## Baseline
 
@@ -29,21 +32,34 @@ Three findings carry forward into every later ticket:
 - **`trtexec` and `nvcc` are installed but not on `PATH`** (`/usr/src/tensorrt/bin/trtexec`), and the repo `.venv` was created without system site packages so it cannot see the apt TensorRT bindings. The gate bridges with `PYTHONPATH=/usr/lib/python3.10/dist-packages` rather than recreating the `.venv` underneath in-flight Stage F work.
 - **Anything touching the GPU must run unsandboxed.** The Tegra device nodes are not visible in the agent sandbox, so `cuInit` fails there. Inventory, `dpkg`, and `tegrastats` work sandboxed.
 
-**There is no NVIDIA product called "TensorRT Edge-LLM."** The old ticket 1 title said there was. The nearest real thing, TensorRT-LLM, is **absent with no Tegra aarch64 wheel** — the aarch64 wheels on `pypi.nvidia.com` are SBSA Grace-class, and the `v0.12.0-jetson` branch targets JetPack 6.1 on **AGX Orin 64 GB**, not this Orin Nano 8 GB.
+**TensorRT-LLM is absent with no Tegra aarch64 wheel** — the aarch64 wheels on `pypi.nvidia.com` are SBSA Grace-class, and the `v0.12.0-jetson` branch targets JetPack 6.1 on **AGX Orin 64 GB**, not this Orin Nano 8 GB.
+
+> ### Correction (2026-08-26): TensorRT Edge-LLM is real and this board is on its support matrix
+>
+> This doc previously asserted that "there is no NVIDIA product called 'TensorRT Edge-LLM.'" **That was wrong.** [`NVIDIA/TensorRT-Edge-LLM`](https://github.com/NVIDIA/TensorRT-Edge-LLM) is a real, active, Apache-2.0 NVIDIA project — latest release **v0.10.0** (2026-08-12) — and it is **a different project from TensorRT-LLM**. G1 correctly found no `tensorrt_llm` package installed, but that finding said nothing about Edge-LLM, which ships as a local CMake source build with no wheel and no apt package.
+>
+> Its v0.10.0 Official Support Matrix lists **Jetson Orin / JetPack 6.2+ / CUDA 12.6** as `Compatible`, `installation.md` carries a **"JetPack 6.2+ Orin"** CMake block, **Jetson Orin Nano 8 GB** is one of five benchmarked platforms, **Qwen2.5-VL-3B-Instruct** is in the supported-models matrix, and **INT4 AWQ** is valid on all platforms. **`JETBOT_SPEC.md`'s original runtime choice was correct.** No JetPack 7 upgrade is required.
+>
+> Everything G1 *measured* still stands. What changes is the conclusion drawn from it. Full evidence, the Orin Nano 8 GB benchmark table, and the two remaining blockers: **[07b-tensorrt-edge-llm.md](07b-tensorrt-edge-llm.md)**.
 
 ## Separate tickets (dummy I/O only)
 
 | # | Ticket | State |
 | --- | --- | --- |
 | G1 | TensorRT runtime present and building engines | **Done** — see above |
-| G1a | **Install PyTorch for JetPack 6 / CUDA 12.6 aarch64** | **Prerequisite, sequenced ahead of G3/G4** |
-| G2 | Qwen2.5-VL-3B **via llama.cpp + GGUF**, one dummy vision+text forward | Open |
+| G1a | **Install PyTorch for JetPack 6 / CUDA 12.6 aarch64** | **Prerequisite, sequenced ahead of G3/G4/G5** |
+| G2 | Qwen2.5-VL-3B **via llama.cpp + GGUF**, one dummy vision+text forward | Open — **primary VLM path** |
 | G3 | smolvla dummy motor-token I/O (no PWM) | Blocked on G1a |
 | G4 | llama-nemotron-embed-vl-1b-v2 dummy vector out | Blocked on G1a |
+| G5 | **TensorRT Edge-LLM** — Qwen2.5-VL-3B INT4 AWQ, the spec's original runtime | Open — evaluated on-matrix, blocked on G1a + a CuTe DSL artifact |
 
 **G1a — PyTorch.** G3 and G4 are both blocked on it and no stage previously owned it. It cannot come from PyPI; Jetson needs NVIDIA's wheel index or a `jetson-containers` image matched to CUDA 12.6 / L4T R36.
 
-**G2 — llama.cpp + GGUF is the decided path.** A ~2.0 GB Q4 text backbone plus a **mandatory ~1.25 GB F16 `mmproj` vision encoder** (not quantizable without visible degradation), with the vision tower loaded on demand. A **CUDA-enabled llama.cpp for Tegra must be compiled locally** — no llama.cpp binary exists on this host — and vision support for this architecture has needed recent or forked llama.cpp, so pin and verify the build. INT4 AWQ is off the table: AWQ checkpoints need AutoAWQ kernels that are unavailable on Jetson aarch64, and TensorRT's `INT4` flag is ONNX Q/DQ weight-only quantization, not an AWQ loader, and brings no serving layer. Against ~4.8–5.3 GB available the weights fit; **the real risk is co-residency with the Stage F voice stack on 8 GB shared memory.**
+**G2 — llama.cpp + GGUF is the path to the first passing gate.** A ~2.0 GB Q4 text backbone plus a **mandatory ~1.25 GB F16 `mmproj` vision encoder** (not quantizable without visible degradation), with the vision tower loaded on demand. A **CUDA-enabled llama.cpp for Tegra must be compiled locally** — no llama.cpp binary exists on this host — and vision support for this architecture has needed recent or forked llama.cpp, so pin and verify the build. Against ~4.8–5.3 GB available the weights fit; **the real risk is co-residency with the Stage F voice stack on 8 GB shared memory.** It stays primary because it has the fewest prerequisites: no PyTorch, no x86 host, no vendor kernel artifact.
+
+**G5 — TensorRT Edge-LLM is the spec's original path, and it is viable.** *Corrected 2026-08-26.* The earlier claim that "INT4 AWQ is off the table" was reasoning about **AutoAWQ**, whose GEMM/Triton kernels are indeed unavailable on Jetson aarch64. Edge-LLM does not use AutoAWQ: it reads an AWQ checkpoint in its own exporter and emits an `Int4GroupwiseGemmPlugin` TensorRT engine. `Qwen/Qwen2.5-VL-3B-Instruct-AWQ` is on its supported-models list, so **no on-device calibration is needed** — which also removes the GPU-host quantization requirement. NVIDIA's published Orin Nano 8 GB figure for the nearest comparable model (Qwen3-VL-2B, INT4 AWQ backbone + FP16 vision tower) is **36.9 tok/s in 4,380 MB peak**, better than the GGUF envelope above. Two gates remain: **PyTorch** for the CPU-only ONNX export (G1a / [#30](https://github.com/AbuAyah110/jetbot-orin-super/issues/30)), and a **`sm_87` + CUDA-12 CuTe DSL kernel artifact**, which upstream builds but does not ship — without it CMake cannot configure. Details: [07b-tensorrt-edge-llm.md](07b-tensorrt-edge-llm.md).
+
+Separately, plain TensorRT's `INT4` flag remains what G1 said it was — ONNX Q/DQ weight-only quantization with no serving layer. That is a statement about *base* TensorRT 10.3, and it is unrelated to Edge-LLM, which supplies the serving layer itself.
 
 **G3 — smolvla** ships PyTorch safetensors (~450M params, ~0.9 GB BF16) via LeRobot's `SmolVLAPolicy`, with no published ONNX or engine. The **`smolvla-jetbot` fine-tune named in the old spec does not exist**; only `lerobot/smolvla_base` does. Run it eagerly for the dummy gate and keep TensorRT export as a later optimization ticket.
 

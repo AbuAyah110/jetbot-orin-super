@@ -326,7 +326,9 @@ def inventory() -> dict:
         "dpkg": first_line(sh("dpkg-query -W -f='${Package} ${Version}' libcublas-12-6")),
     }
 
-    # TensorRT-LLM / "Edge-LLM": look, do not assume.
+    # TensorRT-LLM and TensorRT Edge-LLM are separate projects; probe for both.
+    # A miss here means "not installed", not "does not exist" — Edge-LLM has no
+    # wheel and no apt package, so absence is its expected pre-install state.
     search = sh(
         "find /opt /usr/local /usr/src /usr/lib/python3.10 /home/impulse110 -maxdepth 4 "
         "\\( -iname '*tensorrt_llm*' -o -iname '*tensorrt-llm*' -o -iname '*edge*llm*' \\) "
@@ -789,17 +791,38 @@ def feasibility(inv: dict, smoke: dict, head: dict) -> dict:
         "g2_qwen25_vl_3b_int4_awq": {
             "spec_claim": "TensorRT Edge-LLM (C++ runtime) executes Qwen2.5-VL-3B INT4 AWQ",
             "runtime_present_for_that_claim": False,
+            "spec_claim_is_valid": True,
+            "correction_2026_08_26": (
+                "An earlier revision of this gate reported that no NVIDIA product called "
+                "'TensorRT Edge-LLM' exists. That was wrong. NVIDIA/TensorRT-Edge-LLM is a real, "
+                "active, Apache-2.0 NVIDIA project (latest release v0.10.0, 2026-08-12) and is a "
+                "DIFFERENT project from TensorRT-LLM. The filesystem search below correctly finds "
+                "no tensorrt_llm package, but that says nothing about Edge-LLM, which ships only as "
+                "a local CMake source build (no wheel, no apt package) and is therefore expected to "
+                "be absent before installation. Edge-LLM's v0.10.0 support matrix lists Jetson Orin "
+                "/ JetPack 6.2+ / CUDA 12.6 as Compatible, Orin Nano 8 GB is a benchmarked platform, "
+                "Qwen2.5-VL-3B-Instruct(-AWQ) is a supported checkpoint, and INT4 AWQ is valid on "
+                "all platforms. See docs/bringup/07b-tensorrt-edge-llm.md."
+            ),
             "blockers": [
-                "TensorRT-LLM is not installed and NVIDIA publishes no Tegra aarch64 wheel; "
-                "pypi.nvidia.com aarch64 wheels are SBSA (Grace) only and their TensorRT dep "
-                "refuses to build on Tegra.",
+                "TensorRT Edge-LLM is not installed here yet; it is a local CMake source build. "
+                "Its ONNX export step needs torch==2.13.0 (CPU is sufficient), which is absent.",
+                "No sm_87 + CUDA-12 CuTe DSL kernel artifact is published: "
+                "kernelSrcs/cuteDSLPrebuilt/ ships only cuda13 tarballs, and GitHub releases carry "
+                "no assets, so CMake cannot configure for JetPack 6 without generating it locally.",
+                "TensorRT-LLM (a separate project) is not installed and NVIDIA publishes no Tegra "
+                "aarch64 wheel; pypi.nvidia.com aarch64 wheels are SBSA (Grace) only and their "
+                "TensorRT dep refuses to build on Tegra.",
                 "Jetson TensorRT-LLM support lives on the v0.12.0-jetson branch, which must be "
                 "built from source with --cuda_architectures 87; it targets JetPack 6.1 and "
                 "Jetson AGX Orin 64 GB, while this board is L4T R36.4.4 / Orin Nano 8 GB.",
-                "AWQ INT4 checkpoints depend on AutoAWQ GEMM / Triton kernels that are not "
-                "available on Jetson aarch64, so an AWQ safetensors checkout is not directly runnable.",
-                "No PyTorch, no transformers, no quantization toolkit (modelopt) installed, so "
-                "re-quantizing on-device is also not currently possible.",
+                "AutoAWQ's GEMM / Triton kernels are unavailable on Jetson aarch64, so an AWQ "
+                "checkpoint is not runnable *through AutoAWQ*. This does not block TensorRT "
+                "Edge-LLM, which reads AWQ checkpoints in its own exporter and emits an "
+                "Int4GroupwiseGemmPlugin engine.",
+                "No PyTorch, no transformers, no quantization toolkit (modelopt) installed. "
+                "Calibration is avoidable regardless: Qwen/Qwen2.5-VL-3B-Instruct-AWQ is a "
+                "supported pre-quantized checkpoint, so no on-device quantization is required.",
             ],
             "int4_support_in_installed_stack": {
                 "tensorrt_datatype_int4": "trt.DataType.INT4 and BuilderFlag.INT4 exist in TensorRT 10.3",
@@ -813,11 +836,15 @@ def feasibility(inv: dict, smoke: dict, head: dict) -> dict:
             "realistic_paths": [
                 "llama.cpp with a Qwen2.5-VL GGUF pair (Q4_K_M text backbone ~2.0 GB plus a "
                 "mandatory F16 mmproj vision encoder ~1.25 GB). Needs a CUDA build of llama.cpp; "
-                "no llama.cpp binary is present on this board.",
+                "no llama.cpp binary is present on this board. Fewest prerequisites, so this is "
+                "the shortest path to a first passing gate.",
+                "TensorRT Edge-LLM (the spec's original runtime) — on-matrix for this board: "
+                "cmake -DEMBEDDED_TARGET=jetson-orin -DCUDA_CTK_VERSION=12.6, artifact tag sm_87, "
+                "INT4 AWQ backbone + FP16 vision tower. NVIDIA's published Orin Nano 8 GB figure "
+                "for the nearest comparable model (Qwen3-VL-2B) is 36.9 tok/s in 4,380 MB peak. "
+                "Gated on torch for the ONNX export and on the sm_87/cuda12 CuTe DSL artifact.",
                 "MLC-LLM via jetson-containers (docker daemon is active, but no images are pulled "
                 "and this checkout has no tensorrt_llm package).",
-                "Build TensorRT-LLM v0.12.0-jetson from source — a multi-hour compile that will "
-                "lean hard on the 32 GiB swap and is unproven on Orin Nano 8 GB.",
             ],
             "expected_memory_envelope": (
                 "INT4/Q4 weights ~2.0-2.2 GB plus an unquantized F16 vision encoder ~1.25 GB plus "
@@ -826,7 +853,12 @@ def feasibility(inv: dict, smoke: dict, head: dict) -> dict:
                 "concurrently with the Stage F voice stack on 8 GB shared memory is the real risk, "
                 "not the weights themselves."
             ),
-            "verdict": "NOT feasible as specified; feasible via llama.cpp GGUF after a CUDA build.",
+            "verdict": (
+                "Feasible on the spec's own runtime (TensorRT Edge-LLM), which is on-matrix for "
+                "this board, but not installable today: gated on torch for the ONNX export and on "
+                "an unpublished sm_87/cuda12 CuTe DSL artifact. llama.cpp GGUF after a CUDA build "
+                "is the shortest path to a first passing gate."
+            ),
         },
         "g3_smolvla_jetbot": {
             "spec_claim": "smolvla-jetbot runs as a TensorRT engine",
@@ -874,8 +906,11 @@ def feasibility(inv: dict, smoke: dict, head: dict) -> dict:
             "verdict": "NOT feasible as a TensorRT engine; feasible in PyTorch, but memory-expensive.",
         },
         "spec_mismatches": [
-            "JETBOT_SPEC.md names 'NVIDIA TensorRT Edge-LLM (C++ Runtime)'. No NVIDIA product ships "
-            "under that name. The nearest real thing is TensorRT-LLM, and it is not installed here.",
+            "RETRACTED 2026-08-26: this list previously claimed that no NVIDIA product ships under "
+            "the name 'TensorRT Edge-LLM'. It does — NVIDIA/TensorRT-Edge-LLM, Apache-2.0, v0.10.0 "
+            "— and it is not TensorRT-LLM. JETBOT_SPEC.md was correct. The narrower, still-open "
+            "mismatch: Edge-LLM is not installed, its export needs torch, and its sm_87/cuda12 "
+            "CuTe DSL artifact is unpublished.",
             "The spec treats 'NeMo TensorRT Engines' as an installed capability. Only base TensorRT "
             "10.3 is installed; there is no NeMo, no TensorRT-LLM, and no ONNX/TensorRT export of any "
             "of the named models.",
