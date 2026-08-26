@@ -80,16 +80,18 @@ Pass 2026-08-25: `.venv` created with `virtualenv` (`python3-venv` apt not prese
 | --- | --- |
 | F1: Identify SSS1629 ALSA device and establish safe mixer baseline | Name-resolved 16 kHz mono capture, then separate low-volume playback; sidetone off |
 | F2: Validate WebRTC APM acoustic echo and noise front end | Clean/noisy/echo fixtures show speech preservation plus measured noise/echo reduction |
+| F3: Benchmark optional RNNoise residual denoising | Reproducible APM-only vs APM+RNNoise 48 kHz/resampling A/B report |
+| F4: Validate NVIDIA FastConformer ASR on Orin | One WAV → transcript; latency, real-time factor, utilization, and peak RAM/VRAM recorded |
+| F5: Validate NVIDIA FastPitch and HiFi-GAN TTS on Orin | Text → mel → WAV → safe one-shot playback; latency, real-time factor, utilization, and peak RAM/VRAM recorded |
+| F6: Validate AEC-protected duplex voice pipeline and feedback watchdog | Duplex turn-taking passes only after F2; watchdog and combined latency/memory evidence recorded |
+
+### Stage F results
 
 F1 pass 2026-08-25: `plughw:CARD=Device,DEV=0` (Solid State System USB PnP); sidetone off; capture 80%; speaker 20%. See [docs/bringup/04-audio.md](docs/bringup/04-audio.md).
 
 F2 pass 2026-08-25: `pywebrtc-audio==0.1.0` offline fixtures; NS 8.2×; AEC 236×; no live duplex. See [docs/bringup/06-voice.md](docs/bringup/06-voice.md).
 
 F4 pass 2026-08-25: NeMo FastConformer CTC int8 ONNX via `sherpa-onnx==1.13.6` (CPU). Offline model, 2 threads: **RTF 0.045**, warm 0.30 s on 6.6 s audio, **WER 0.00**, peak RSS **324 MiB**, swap untouched. NeMo/PyTorch deliberately not installed — no reachable JetPack-6 torch wheel; ONNX path chosen instead. Streaming 80 ms model also runs (RTF 0.339) and is reserved for F6. Still owed: a mic-captured utterance, and a 4-thread sweep on an idle board (the board had ~2 cores of foreign load). See [docs/bringup/06-voice.md](docs/bringup/06-voice.md).
-| F3: Benchmark optional RNNoise residual denoising | Reproducible APM-only vs APM+RNNoise 48 kHz/resampling A/B report |
-| F4: Validate NVIDIA FastConformer ASR on Orin | One WAV → transcript; latency, real-time factor, utilization, and peak RAM/VRAM recorded |
-| F5: Validate NVIDIA FastPitch and HiFi-GAN TTS on Orin | Text → mel → WAV → safe one-shot playback; latency, real-time factor, utilization, and peak RAM/VRAM recorded |
-| F6: Validate AEC-protected duplex voice pipeline and feedback watchdog | Duplex turn-taking passes only after F2; watchdog and combined latency/memory evidence recorded |
 
 I6 (agent voice tools) may one-shot after F4/F5; **duplex tools wait for F6**. If F1–F4 are open, I6 stays a stub.
 
