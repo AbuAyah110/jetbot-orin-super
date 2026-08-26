@@ -85,7 +85,9 @@ Official k2-fsa release artifacts:
 
 Measured on the Jetson with 2 threads and `sherpa-onnx==1.13.6`: both models loaded in 3.99 s; Piper generated 1.3895 s of audio in 0.353 s (RTF 0.254); Zipformer returned `TESTING ONE TWO THREE` in 0.060 s (RTF 0.043, WER 0.00). Peak process RSS was **166,220 KiB = 162.3 MiB = 170.2 decimal MB**, below the target under both unit conventions. GPU/VRAM use was **0 MiB**. This is the practical "single C++ process" arrangement supplied by the Python bindings; there is no stock native Sherpa binary that combines both agent APIs.
 
-The longer 6.625 s bundled ASR fixture also returns WER 0.00, but retaining its larger activation arena while synthesizing and re-decoding another utterance can exceed 200 MiB. The reported compact gate is therefore a short-turn memory result, not a guarantee for unbounded utterance length. Production must cap turns.
+A five-second capture from the name-resolved live USB microphone was also transcribed successfully (non-empty transcript, ASR RTF 0.044). With Piper resident in the same process that run peaked at **196,776 KiB = 192.2 MiB = 201.5 decimal MB**. It passes a 200 MiB budget but narrowly fails a strict 200,000,000-byte definition of "200 MB"; the sub-200 MB claim is therefore valid only for the short offline turn unless the budget explicitly means MiB. Live playback was not attempted.
+
+The longer 6.625 s bundled ASR fixture also returns WER 0.00, but retaining its larger activation arena while synthesizing and re-decoding another utterance can exceed 200 MiB. These results are short-turn measurements, not a guarantee for unbounded utterance length. Production must cap turns.
 
 Dependency inventory found **no package unique to the retired models**: `sherpa-onnx` and `sherpa-onnx-core` are reused here, while NumPy, PyYAML, and `pywebrtc-audio` remain required. Neither torch nor NeMo is installed. The retired FastConformer and Matcha/HiFi-GAN files occupied about 668 MiB under `data/models/f4` and `data/models/f5`; they and their old fetch/test scripts were removed.
 
