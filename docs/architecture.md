@@ -45,7 +45,7 @@ No Cosmos, Qwen, Hermes, EmbeddingGemma, MCP, or Nav2 in this milestone.
 | --- | --- |
 | Executive conversation | Qwen3.5-0.8B |
 | Physical / visual specialist | Cosmos Reason2-2B via llama.cpp |
-| Long-term memory embeddings | EmbeddingGemma (256-d) |
+| Long-term memory embeddings | **jina-clip-v2** (1024-d native, **store 256-d** Matryoshka) — see [`jina_clip_v2.md`](jina_clip_v2.md). EmbeddingGemma remains the smaller **text-only** option. **Not** SigLIP 2, **not** Nemotron-embed. |
 | Agent orchestration | Hermes + MCP (Robot, Memory, …) |
 | Navigation | Nav2 only after odometry + range sensing |
 

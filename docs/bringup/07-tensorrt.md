@@ -39,7 +39,7 @@ Three findings carry forward into every later ticket:
 | G1a | **Install PyTorch for JetPack 6 / CUDA 12.6 aarch64** | **Prerequisite, sequenced ahead of G3/G4** |
 | G2 | Qwen2.5-VL-3B **via llama.cpp + GGUF**, one dummy vision+text forward | Open |
 | G3 | smolvla dummy motor-token I/O (no PWM) | Blocked on G1a |
-| G4 | llama-nemotron-embed-vl-1b-v2 dummy vector out | Blocked on G1a |
+| G4 | jina-clip-v2 dummy vector out (not Nemotron) | Open — prefer Hub INT8 ONNX; blocked on fetch/ORT, not G1a |
 
 **G1a — PyTorch.** G3 and G4 are both blocked on it and no stage previously owned it. It cannot come from PyPI; Jetson needs NVIDIA's wheel index or a `jetson-containers` image matched to CUDA 12.6 / L4T R36.
 
@@ -47,7 +47,12 @@ Three findings carry forward into every later ticket:
 
 **G3 — smolvla** ships PyTorch safetensors (~450M params, ~0.9 GB BF16) via LeRobot's `SmolVLAPolicy`, with no published ONNX or engine. The **`smolvla-jetbot` fine-tune named in the old spec does not exist**; only `lerobot/smolvla_base` does. Run it eagerly for the dummy gate and keep TensorRT export as a later optimization ticket.
 
-**G4 — llama-nemotron-embed-vl-1b-v2** ships HF safetensors with no published engine, and **the "1b" is misleading: ~1.7B params, ~3.4 GB in FP16.** NVIDIA's optimized path is a NeMo Retriever NIM, which is x86-first and not a drop-in on Tegra. Consider a smaller text-only embedder for Stage I memory.
+**G4 — embedder dummy vector.** Do **not** load `llama-nemotron-embed-vl-1b-v2` (~1.7B,
+~3.4 GB FP16). Stage I default is **`jinaai/jina-clip-v2`** (865M, Hub INT8 ONNX listed,
+**not** downloaded in the audit pass). See [`jina_clip_v2.md`](../jina_clip_v2.md).
+Nemotron remains a G1 finding only. Dummy I/O can use ONNX Runtime on the INT8 graph
+once fetched; TensorRT is later. PyTorch (G1a) is **not** required if ORT loads the
+Hub ONNX.
 
 Pass per ticket: process exits 0 with a logged output shape / token count. Fail: OOM — reduce batch, confirm 32 GB swap, MAXN SUPER.
 

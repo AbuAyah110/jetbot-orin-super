@@ -12,7 +12,7 @@ Full plan: [`PROJECT_PLAN.md`](../PROJECT_PLAN.md).
 | M1 | ROS 2 + motor control + watchdog | In progress |
 | M2 | CSI camera (mock-first on laptop) | In progress |
 | M3 | Cosmos Reason2-2B (llama.cpp) | Planned |
-| M4 | EmbeddingGemma + SQLite/HNSW | Planned |
+| M4 | EmbeddingGemma + SQLite/HNSW | Planned — **bring-up Stage I default is jina-clip-v2 @ 256-d**, not SigLIP 2 / Nemotron; see [`jina_clip_v2.md`](jina_clip_v2.md) |
 | M5 | Memory MCP | Planned |
 | M6 | Robot MCP | Planned |
 | M7 | Hermes + Cosmos | Planned |

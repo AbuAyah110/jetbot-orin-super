@@ -19,6 +19,7 @@ This documentation set is adapted from [jetbot.org](https://jetbot.org/master/) 
 - OS: **JetPack** on SSD (no JetBot SD image)
 - Power: **custom Super-capable supply** — [power.md](power.md)
 - Future: mic, speaker, VLM, ASR, TTS, RAG — [roadmap](roadmap.md)
+- Memory budget: [`memory_budget.md`](memory_budget.md) · Gemini audit: [`gemini_architecture_audit.md`](gemini_architecture_audit.md) · Stage I embedder: [`jina_clip_v2.md`](jina_clip_v2.md)
 
 ## It's educational
 
