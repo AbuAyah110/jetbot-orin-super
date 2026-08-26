@@ -1,0 +1,30 @@
+{
+  "type": "smolvla",
+  "n_obs_steps": 1,
+  "input_features": {
+    "observation.state": { "type": "STATE", "shape": [6] },
+    "observation.images.camera1": { "type": "VISUAL", "shape": [3, 256, 256] },
+    "observation.images.camera2": { "type": "VISUAL", "shape": [3, 256, 256] },
+    "observation.images.camera3": { "type": "VISUAL", "shape": [3, 256, 256] }
+  },
+  "output_features": {
+    "action": { "type": "ACTION", "shape": [6] }
+  },
+  "chunk_size": 50,
+  "n_action_steps": 50,
+  "max_state_dim": 32,
+  "max_action_dim": 32,
+  "resize_imgs_with_padding": [512, 512],
+  "empty_cameras": 0,
+  "tokenizer_max_length": 48,
+  "num_steps": 10,
+  "use_cache": true,
+  "vlm_model_name": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+  "load_vlm_weights": true,
+  "num_vlm_layers": 16,
+  "expert_width_multiplier": 0.75,
+  "pad_language_to": "max_length",
+  "source": "https://huggingface.co/lerobot/smolvla_base/resolve/main/config.json",
+  "fetched": "2026-08-26",
+  "note": "Tiny config only. Weights were not downloaded. Gemini's 1x3x224x224 + 1x16 text ids do not match this checkpoint."
+}
