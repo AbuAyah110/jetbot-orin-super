@@ -1,0 +1,28 @@
+# Cursor "My Machines" worker for this repo — systemd --user unit (no root needed).
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp systemd/cursor-worker.service.example ~/.config/systemd/user/cursor-worker.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now cursor-worker.service
+#
+# Survive logout (prompts via polkit, once):
+#   loginctl enable-linger impulse110
+#
+# Run `agent login` before enabling this unit; it cannot do a browser login itself.
+# If your CLI installed as cursor-agent, change ExecStart accordingly.
+
+[Unit]
+Description=Cursor My Machines worker (jetbot-orin-super)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/jetbot-orin-super
+ExecStart=%h/.local/bin/agent worker start --name jetbot-orin
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
