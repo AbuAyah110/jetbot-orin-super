@@ -4,7 +4,7 @@
 Safety for this first live test:
   vx abs <= 0.22, wz abs <= 1.0, duration_s <= 0.5, then Robot.stop().
   Invalid JSON / parse fail / exception → Robot.stop().
-  ALSA: SSS1629 Mic playback/sidetone OFF, Speaker <= 20%.
+  ALSA: SSS1629 Mic playback/sidetone OFF, Speaker 75%.
   Never cat the old Cosmos FIFO; engines load via cosmos_resident.
 
 Interactive: Enter = 3 s mic ASR; type text; q quits with stop.
@@ -113,7 +113,7 @@ def apply_alsa_safety() -> dict:
         report = mixer_report(ident['card_index_ephemeral'])
     ident = dict(ident)
     ident['mixer_snippet'] = report[:400]
-    ident['speaker_cap'] = '20%'
+    ident['speaker_cap'] = '75%'
     return ident
 
 
