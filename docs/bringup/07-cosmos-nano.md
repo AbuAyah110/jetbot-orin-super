@@ -147,6 +147,62 @@ Measured **before** any stop (Cursor SSH still connected):
 
 OLED **delta this session: ~0 MiB** (already slim; the win is preventing a future `-m` restart from importing `jetbot/__init__.py`).
 
+### Post-`sudo JETSON_IDLE_RAM.sh --apply` measurement
+
+Measured 2026-08-27 at 12:05 CDT with Cursor still connected:
+
+| Item | Post-apply value |
+| --- | --- |
+| `free -h` | **2.5 GiB used**, 2.1 GiB free, **4.7 GiB available** of 7.4 GiB |
+| `tegrastats` | **2783–2784 / 7620 MB**, SWAP **507 / 32768 MB** (cached 99 MB), GR3D 0% |
+| Swap | `/ssd/32GB.swap`, 32G total, **507.5M used**, priority -2 |
+| `vm.swappiness` | **10**; persisted in `/etc/sysctl.d/99-jetbot-memory.conf` |
+| docker | **inactive**, service disabled |
+| snapd | **inactive**, service disabled |
+| gdm / gdm3 | **inactive**; default target remains `multi-user.target` |
+| OLED | **active**, 15.5M systemd memory; PID 369574 |
+| OLED cmdline | `/usr/bin/python3 /home/impulse110/Documents/jetbot-orin-super/jetbot/apps/oled_status.py` |
+| CSI daemon | `nvargus-daemon` active, ~1.4 MiB RSS; no capture pipeline started |
+| Power mode | `MAXN_SUPER` |
+
+The privileged cleanup reclaimed about 0.1 GiB used RAM and increased available
+RAM from 4.6 to 4.7 GiB in this Cursor-connected session. The remaining large
+resident is Cursor remote, not a robot service. No model or camera pipeline was
+loaded and motors were not opened.
+
+## Repository-local runtime layout
+
+Code stays in `/home/impulse110/Documents/jetbot-orin-super`. Non-git payloads:
+
+```text
+third_party/tensorrt-edge-llm/  # ignored full v0.10.0 source/build clone
+data/edgellm/cosmos/
+  onnx/llm/
+  onnx/visual/
+  engines/llm/
+  engines/visual/
+  logs/
+```
+
+For compatibility, the old model destination may be a symlink:
+
+```bash
+mkdir -p /home/impulse110/Documents/jetbot-orin-super/data/edgellm/cosmos
+ln -s /home/impulse110/Documents/jetbot-orin-super/data/edgellm/cosmos \
+  ~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B
+```
+
+Do not commit the Edge-LLM clone, ONNX, external data, engines, weights, or
+virtual environments. See `data/edgellm/README.md`.
+
+### Exact workstation rsync reminder
+
+Run on the workstation:
+
+```bash
+rsync -avP --checksum ~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B-ModelOpt-INT4/onnx/ impulse110@192.168.50.65:~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/onnx/
+```
+
 ## Exact on-device engine build (run only after ONNX arrives)
 
 Export-time (workstation, already required in the ONNX tree): `--externalize-weights int4_ffn --int4-gemm-plugin-version 1`.
@@ -155,9 +211,10 @@ On this Jetson:
 
 ```bash
 export PATH=/usr/local/cuda-12.6/bin:$PATH
-export EDGELLM_ROOT=$HOME/Documents/_edgellm_ref/repo
+export REPO_ROOT=$HOME/Documents/jetbot-orin-super
+export EDGELLM_ROOT=$REPO_ROOT/third_party/tensorrt-edge-llm
 export EDGELLM_PLUGIN_PATH=$EDGELLM_ROOT/build/libNvInfer_edgellm_plugin.so
-export WORKSPACE_DIR=$HOME/tensorrt-edgellm-workspace/Cosmos-Reason2-2B
+export WORKSPACE_DIR=$REPO_ROOT/data/edgellm/cosmos
 
 # Confirm pin
 git -C "$EDGELLM_ROOT" describe --tags --always   # expect v0.10.0
@@ -181,7 +238,7 @@ cd "$EDGELLM_ROOT"
 Wrapper that **exits 2** if ONNX is still missing:
 
 ```bash
-./scripts/bringup/g_cosmos_llm_build.sh
+./scripts/bringup/llm_build_cosmos.sh
 ```
 
 Build LLM then ViT **sequentially**, nothing else large resident (stop voice/agent). Sample `tegrastats` throughout. Do not copy x86 `.engine` files.
@@ -197,6 +254,6 @@ Build LLM then ViT **sequentially**, nothing else large resident (stop voice/age
 | `llm_build` started | **No** (waiting on workstation ONNX) |
 | Cosmos engine loaded / tegrastats | **N/A** |
 | BGE | Not on disk (CPU later) |
-| Idle RAM (Cursor still on) | **2.6 GiB used / 4.6 GiB available**; sudo `JETSON_IDLE_RAM.sh --apply` still owed |
+| Idle RAM (Cursor still on, post-apply) | **2.5 GiB used / 4.7 GiB available**; tegrastats 2783–2784 / 7620 MB |
 
-When ONNX lands: run `g_cosmos_llm_build.sh`, attach peak RAM/swap, and abort if tegrastats ≥ 5.0 GiB on a loaded inference engine.
+When ONNX lands: run `llm_build_cosmos.sh`, attach peak RAM/swap, and abort if tegrastats ≥ 5.0 GiB on a loaded inference engine.

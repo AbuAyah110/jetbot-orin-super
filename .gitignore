@@ -16,10 +16,22 @@ build/
 *.bin
 .DS_Store
 
+# Local TensorRT Edge-LLM source/build tree. Keep the v0.10.0 clone here, but
+# never commit the full third-party checkout or generated CUDA artifacts.
+/third_party/tensorrt-edge-llm/
+
+# Cosmos ONNX, externalized weights, SM87 engines, and build logs live here.
+# Directory documentation/placeholders may be tracked; all runtime payloads are not.
+/data/edgellm/**
+!/data/edgellm/
+!/data/edgellm/README.md
+
 # Runtime data (keep placeholders)
 /data/*
 !/data/**/
 !/data/**/.gitkeep
+!/data/edgellm/
+!/data/edgellm/README.md
 # Ignore captured images/logs but keep directory placeholders
 /data/images/**
 !/data/images/.gitkeep
