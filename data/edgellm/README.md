@@ -33,3 +33,16 @@ A pre-existing CPU BGE-small ONNX candidate was consolidated at
 ignored and was not loaded or installed in this pass. Legacy thin-stack source,
 LanceDB data, and the stopped accidental build logs are retained under the
 ignored `data/archive/` tree for provenance.
+
+Compatibility paths are symlinks only; they do not duplicate payloads:
+
+```text
+~/jetbot-thin-stack/jetbot_vlm_agent  -> data/archive/legacy-thin-stack
+~/jetbot-thin-stack/cosmos-onnx       -> data/edgellm/cosmos/onnx
+~/jetbot-thin-stack/cosmos-engines    -> data/edgellm/cosmos/engines
+~/jetbot-thin-stack/bge-small-en-v1.5-onnx
+                                      -> data/models/bge-small-en-v1.5-onnx
+```
+
+The tracked production code is `jetbot_agent/robot_loop/`; do not edit the
+legacy compatibility tree as a second source checkout.

@@ -34,6 +34,11 @@ Explicitly not in the robot loop: PyTorch, `transformers`, TensorRT-LLM, Hermes
 extra HTTP LLM server, GPU BGE, or a second CSI pipeline. Qwen2.5-VL and
 llama.cpp artifacts were deleted from this device.
 
+Legacy thin-stack tools expect `~/jetbot-thin-stack/jetbot_vlm_agent/`. That
+path is retained as a compatibility symlink into the repository's ignored
+archive. Its Cosmos/BGE model paths are sibling symlinks into ignored
+repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
+
 ## Current status — 2026-08-27
 
 | Stage | State | Evidence / gate |
@@ -133,6 +138,8 @@ tegrastats.
 | `docs/bringup/07-cosmos-nano.md` | tracked | Inventory, RAM, rsync/build evidence |
 | `third_party/tensorrt-edge-llm/` | ignored | Full Edge-LLM v0.10.0 clone/build |
 | `data/edgellm/cosmos/` | ignored | ONNX, external weights, SM87 engines, logs |
+| `~/jetbot-thin-stack/jetbot_vlm_agent/` | external symlink | Legacy thin-stack compatibility path; production source is not here |
+| `~/jetbot-thin-stack/{cosmos-onnx,cosmos-engines,bge-small-en-v1.5-onnx}` | external symlinks | Compatibility aliases into ignored repo data; no duplicate bytes |
 
 Never commit weights, ONNX, engines, GGUF, safetensors, Edge-LLM source/build,
 virtual environments, or generated LanceDB tables.

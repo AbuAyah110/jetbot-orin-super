@@ -205,6 +205,18 @@ ln -s /home/impulse110/Documents/jetbot-orin-super/data/edgellm \
 # data/edgellm/Cosmos-Reason2-2B is a local symlink to data/edgellm/cosmos
 ```
 
+Legacy thin-stack scripts and notes still resolve at:
+
+```text
+~/jetbot-thin-stack/jetbot_vlm_agent/
+```
+
+That directory is a compatibility symlink to
+`data/archive/legacy-thin-stack/`. The sibling legacy model names
+`cosmos-onnx`, `cosmos-engines`, and `bge-small-en-v1.5-onnx` are symlinks to
+the ignored canonical payload directories. They consume no additional model
+storage. Production code remains under tracked `jetbot_agent/robot_loop/`.
+
 Do not commit the Edge-LLM clone, ONNX, external data, engines, weights, or
 virtual environments. See `data/edgellm/README.md`.
 

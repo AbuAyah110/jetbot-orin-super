@@ -11,8 +11,13 @@ build/
 !.env.example
 *.engine
 *.onnx
+*.onnx.data
+*.plan
 *.gguf
 *.safetensors
+*.pt
+*.pth
+*.ckpt
 *.bin
 .DS_Store
 
