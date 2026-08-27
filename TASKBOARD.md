@@ -149,8 +149,8 @@ Rescoped 2026-08-26 from "build three TensorRT engines" to "stand up a runtime t
 | --- | --- | --- |
 | [#16](https://github.com/AbuAyah110/jetbot-orin-super/issues/16) G1 TensorRT runtime present | `./scripts/bringup/g1_tensorrt_smoke.sh` | **Pass** |
 | **[#30](https://github.com/AbuAyah110/jetbot-orin-super/issues/30) G1a install PyTorch (JetPack 6 / CUDA 12.6 aarch64)** | `import torch`, `torch.cuda.is_available()` | **Prerequisite — ahead of G3/G4** |
-| [#17](https://github.com/AbuAyah110/jetbot-orin-super/issues/17) G2 Qwen2.5-VL-3B **via llama.cpp + GGUF** dummy forward | dummy I/O, no camera loop | Open — **not** the locked robot VLM |
-| [#37](https://github.com/AbuAyah110/jetbot-orin-super/issues/37) G-Cosmos: Cosmos-Reason2-2B Edge-LLM INT4 on Nano | `./scripts/bringup/g_cosmos_llm_build.sh` after workstation rsync | **Blocked: Cosmos ONNX absent** (2026-08-26). Inventory: [07-cosmos-nano.md](docs/bringup/07-cosmos-nano.md). Qwen2.5-VL engines on disk stay unused. |
+| [#17](https://github.com/AbuAyah110/jetbot-orin-super/issues/17) Locked robot VLM: **Cosmos-Reason2-2B** (Edge-LLM INT4) | rsync ONNX → `g_cosmos_llm_build.sh` | **Qwen artifacts deleted** (2026-08-27). Waiting workstation ONNX. [07-cosmos-nano.md](docs/bringup/07-cosmos-nano.md) |
+| [#37](https://github.com/AbuAyah110/jetbot-orin-super/issues/37) G-Cosmos: Cosmos-Reason2-2B Edge-LLM INT4 on Nano | `./scripts/bringup/g_cosmos_llm_build.sh` after workstation rsync | **Blocked: Cosmos ONNX absent**. Dest: `~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/` |
 | [#18](https://github.com/AbuAyah110/jetbot-orin-super/issues/18) G3 smolvla dummy motor-token I/O (no PWM) | dummy I/O | Blocked on #30 |
 | [#19](https://github.com/AbuAyah110/jetbot-orin-super/issues/19) G4 Nemotron embed dummy vector | dummy I/O | Blocked on #30 |
 

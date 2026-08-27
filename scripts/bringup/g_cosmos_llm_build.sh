@@ -6,7 +6,7 @@
 set -euo pipefail
 
 EDGELLM_ROOT="${EDGELLM_ROOT:-$HOME/Documents/_edgellm_ref/repo}"
-WORKSPACE_DIR="${WORKSPACE_DIR:-$HOME/tensorrt-edgellm-workspace/Cosmos-Reason2-2B-ModelOpt-INT4}"
+WORKSPACE_DIR="${WORKSPACE_DIR:-$HOME/tensorrt-edgellm-workspace/Cosmos-Reason2-2B}"
 ONNX_LLM="$WORKSPACE_DIR/onnx/llm/model.onnx"
 ONNX_VIS="$WORKSPACE_DIR/onnx/visual/model.onnx"
 LLM_BUILD="$EDGELLM_ROOT/build/examples/llm/llm_build"
@@ -18,7 +18,7 @@ export EDGELLM_PLUGIN_PATH="${EDGELLM_PLUGIN_PATH:-$EDGELLM_ROOT/build/libNvInfe
 if [[ ! -f "$ONNX_LLM" ]]; then
   echo "Cosmos ONNX absent: missing $ONNX_LLM" >&2
   echo "Rsync workstation INT4 export to: $WORKSPACE_DIR/onnx/" >&2
-  echo "Do not use ~/tensorrt-edgellm-workspace/Qwen2.5-VL-3B-Instruct-ModelOpt-INT4" >&2
+  echo "Qwen2.5-VL artifacts were deleted; do not rebuild Qwen on this board." >&2
   exit 2
 fi
 
