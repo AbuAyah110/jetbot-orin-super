@@ -27,3 +27,9 @@ may be a symlink to this directory and local `Cosmos-Reason2-2B` may point to
 
 The TensorRT Edge-LLM v0.10.0 source/build checkout belongs at
 `third_party/tensorrt-edge-llm/`, which is also ignored in full.
+
+A pre-existing CPU BGE-small ONNX candidate was consolidated at
+`data/models/bge-small-en-v1.5-onnx/` (127 MiB graph, tokenizer files). It is
+ignored and was not loaded or installed in this pass. Legacy thin-stack source,
+LanceDB data, and the stopped accidental build logs are retained under the
+ignored `data/archive/` tree for provenance.

@@ -25,6 +25,7 @@ build/
 /data/edgellm/**
 !/data/edgellm/
 !/data/edgellm/README.md
+/data/archive/**
 
 # Runtime data (keep placeholders)
 /data/*

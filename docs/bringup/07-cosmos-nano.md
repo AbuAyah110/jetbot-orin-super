@@ -22,25 +22,35 @@ Qwen is **not** the robot VLM. On-device artifacts were deleted so nothing can l
 
 `df -h /` after cleanup: **73G used / 34G avail (69%)** on 113G NVMe (was 82G used / 26G avail). Roughly **~9 GiB freed**. No other `Qwen2.5-VL*` trees under `$HOME`. Did **not** `pip uninstall` sherpa-onnx, numpy, or pywebrtc-audio.
 
-## Cosmos ONNX: **absent** — waiting on workstation rsync
+## Cosmos ONNX: discovered in a stray tree; checksum rsync still required
 
-Canonical empty destination (created this session):
+The initial canonical-path check was accurate but incomplete: no ONNX existed
+under `~/tensorrt-edgellm-workspace`. A workspace-wide cleanup later found a
+complete-looking export under `/home/impulse110/jetbot-thin-stack/cosmos-onnx/`,
+created at 11:40 CDT. It has been moved (not committed) to:
 
 ```
-~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/
+/home/impulse110/Documents/jetbot-orin-super/data/edgellm/cosmos/
   onnx/llm/
   onnx/visual/
   engines/llm/
   engines/visual/
   logs/
-  WAIT_FOR_WORKSTATION_ONNX.txt
 ```
 
-Legacy empty stub still present (same layout): `~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B-ModelOpt-INT4/`. Use **`Cosmos-Reason2-2B`** for rsync.
+Inventory: 3.2 GiB total; LLM config says Edge-LLM `0.10.0`,
+`int4_ffn_weights`, 28 layers, hidden size 2048, and FP16 vision. Key hashes:
 
-**Wait** for workstation artifacts (`TensorRT-Edge-LLM` **v0.10.0** export). Do **not** run `llm_build` until `onnx/llm/model.onnx` exists. Engines are built **on this Jetson** from that ONNX; do not copy x86 `.engine` files.
+- `llm/model.onnx`: `84a6f7bd42d3bc38e74b0fb3c532af8ce3fbab54483fe473b862497ca41d5780`
+- `visual/model.onnx`: `6e8df49afccb939e99cf2d5a1a68c2cdd5f75f5b5e64f6cc88751435a175cb75`
 
-BGE-small is **CPU later** (orchestrator / LanceDB). It is **not on disk yet**. Do not fetch it in this loop.
+The exact workstation `rsync --checksum` command below remains required to
+validate/replace this tree. Engines are built on this Jetson; never copy x86
+`.engine` files.
+
+A local BGE-small CPU candidate was also found and moved to the ignored
+`data/models/bge-small-en-v1.5-onnx/`: 127 MiB ONNX, 384-dimensional normalized
+CLS output, plus a 696 KiB tokenizer. It was not imported or loaded.
 
 ### Workstation rsync (exact destination)
 
@@ -65,8 +75,8 @@ Hub IDs to **reject** on this Nano: `nvidia/Cosmos-Reason2-2B-FP8`, `nvidia/Cosm
 | Product | WaveShare JetBot / Jetson Orin Nano Super (8 GB UMA, SM87) |
 | L4T | R36.4.4 |
 | TensorRT | **10.3** (JetPack) |
-| TensorRT Edge-LLM | `/home/impulse110/Documents/_edgellm_ref/repo` tag **`v0.10.0`** (**kept**) |
-| `llm_build` | `/home/impulse110/Documents/_edgellm_ref/repo/build/examples/llm/llm_build` (already built; can run **after** ONNX lands) |
+| TensorRT Edge-LLM | `third_party/tensorrt-edge-llm/` tag **`v0.10.0`** (ignored full clone/build) |
+| `llm_build` | `third_party/tensorrt-edge-llm/build/examples/llm/llm_build` (already compiled) |
 | `visual_build` | `.../build/examples/multimodal/visual_build` |
 | Disk `/` | NVMe **113G**, **73G used, 34G avail (69%)** after Qwen delete |
 | Swap | `/ssd/32GB.swap` **32 GiB** (**kept**) |
@@ -116,9 +126,11 @@ sudo ./scripts/JETSON_IDLE_RAM.sh --apply
 
 `--apply` stops/disables docker, `nv-l4t-usb-device-mode`, bluetooth, cups, snapd; writes `/etc/sysctl.d/99-jetbot-memory.conf`; rewrites `jetbot_oled.service` to run `oled_status.py` **by path** (no `python3 -m jetbot.apps…`). It does **not** kill `nvargus-daemon`, delete swap, uninstall JetPack, or `llm_build`.
 
-Workstation ONNX (still running as of this write): quantized checkpoint on the PC is `~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B-ModelOpt-INT4/quantized/` (~2.7 GB). After export, rsync to this Jetson: `~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/onnx/`. **Do not** `llm_build` until that tree has `onnx/llm/model.onnx`.
+Workstation export is reported complete in the migrated legacy notes. Use the
+exact checksum rsync below to validate the relocated tree before the deliberate
+build. Do not infer correctness from filenames alone.
 
-### Idle RAM this session (2026-08-27, waiting on rsync)
+### Idle RAM this session (2026-08-27)
 
 Measured **before** any stop (Cursor SSH still connected):
 
@@ -204,6 +216,19 @@ Run on the workstation:
 rsync -avP --checksum ~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B-ModelOpt-INT4/onnx/ impulse110@192.168.50.65:~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/onnx/
 ```
 
+### Unexpected legacy build process stopped
+
+During cleanup, an independently started legacy process was found running
+`llm_build` from `/home/impulse110/jetbot-thin-stack` (PID 381865, start
+12:59:32 CDT). This task did not launch it. It was terminated at 13:01 before
+an engine was written. The log showed repeated 3456 MB tactic requests with
+only about 1890 MB available. No visual build or model load occurred.
+
+Logs were retained under ignored
+`data/archive/unexpected-build-attempt-2026-08-27/`. The deliberate canonical
+builder was **not** run. Re-run workstation checksum rsync first, then invoke
+only `scripts/bringup/llm_build_cosmos.sh`.
+
 ## Exact on-device engine build (run only after ONNX arrives)
 
 Export-time (workstation, already required in the ONNX tree): `--externalize-weights int4_ffn --int4-gemm-plugin-version 1`.
@@ -251,10 +276,10 @@ Build LLM then ViT **sequentially**, nothing else large resident (stop voice/age
 | HOME `/home/impulse110` | OK (Jetson) |
 | Qwen2.5-VL on disk | **Deleted** |
 | Cosmos-Reason2-2B rsync dir | **Ready** (`~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/`) |
-| Cosmos-Reason2 ONNX rsynced | **No** |
-| `llm_build` started | **No** (waiting on workstation ONNX) |
+| Cosmos-Reason2 ONNX | **Present after stray-tree discovery**; workstation `rsync --checksum` validation required |
+| Canonical `llm_build` | **Not run**; unrelated legacy attempt discovered and stopped before engine output |
 | Cosmos engine loaded / tegrastats | **N/A** |
-| BGE | Not on disk (CPU later) |
+| BGE | 127 MiB local CPU ONNX candidate moved to ignored data; not loaded |
 | Idle RAM (Cursor still on, post-apply) | **2.5 GiB used / 4.7 GiB available**; tegrastats 2783–2784 / 7620 MB |
 
-When ONNX lands: run `llm_build_cosmos.sh`, attach peak RAM/swap, and abort if tegrastats ≥ 5.0 GiB on a loaded inference engine.
+After checksum rsync: run `llm_build_cosmos.sh`, attach peak RAM/swap, and abort if tegrastats ≥ 5.0 GiB on a loaded inference engine.

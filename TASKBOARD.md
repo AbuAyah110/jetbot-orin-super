@@ -41,12 +41,12 @@ llama.cpp artifacts were deleted from this device.
 | A–E hardware + Python | Pass with documented notes | [bringup index](docs/bringup/README.md) |
 | F voice | Zipformer + Piper CPU integrated; no model loaded in this pass | [voice issue list](https://github.com/AbuAyah110/jetbot-orin-super/issues?q=is%3Aissue+stage-f) |
 | G1 TensorRT | Pass | [#16](https://github.com/AbuAyah110/jetbot-orin-super/issues/16) |
-| G-Cosmos export | In progress on workstation | [#37](https://github.com/AbuAyah110/jetbot-orin-super/issues/37) |
-| G-Cosmos rsync | Ready; ONNX absent on Jetson | `test -f data/edgellm/cosmos/onnx/llm/model.onnx` |
-| G-Cosmos Jetson build | Blocked only on rsync | `./scripts/bringup/llm_build_cosmos.sh` |
+| G-Cosmos export | Reported complete in migrated workstation notes | [#37](https://github.com/AbuAyah110/jetbot-orin-super/issues/37) |
+| G-Cosmos rsync | ONNX found in stray path and relocated; checksum validation pending | `rsync -avP --checksum ...` |
+| G-Cosmos Jetson build | Blocked on checksum validation; canonical builder not run | `./scripts/bringup/llm_build_cosmos.sh` |
 | One-process scaffold | Parser/camera/prompts/stubs implemented; no model loaded | `pytest tests/unit/test_robot_loop_actions.py` |
 | Robot integration | Pending engines + safe stopped integration | Scripted parked episode; no direct PWM |
-| Memory | Stub only; no BGE weights downloaded | CPU BGE vector round-trip in LanceDB |
+| Memory | Stub only; local 127 MiB BGE ONNX candidate found, not loaded | CPU BGE vector round-trip in LanceDB |
 
 Post-idle-script baseline with Cursor connected: `free -h` **2.5 GiB used /
 4.7 GiB available**; tegrastats **2783–2784 / 7620 MB**, GR3D 0%; swap
@@ -65,9 +65,8 @@ Post-idle-script baseline with Cursor connected: `free -h` **2.5 GiB used /
 - [ ] Generate and verify checksums.
 
 Tracking: [#37](https://github.com/AbuAyah110/jetbot-orin-super/issues/37).
-The obsolete Qwen/llama.cpp prototype is tracked historically by
-[#17](https://github.com/AbuAyah110/jetbot-orin-super/issues/17), not as a
-deployment dependency.
+The obsolete Qwen/llama.cpp prototype is closed as superseded:
+[#17](https://github.com/AbuAyah110/jetbot-orin-super/issues/17).
 
 ### 2. Workstation → Jetson rsync
 
@@ -95,6 +94,10 @@ runs Edge-LLM v0.10.0 `llm_build` with batch 1, input 3072, KV 4096. Export
 flags are recorded by the script but are not passed to the v0.10.0 builder,
 which does not accept them. Build sequentially with no voice/model resident.
 
+A legacy process outside the canonical repo unexpectedly started `llm_build`
+during cleanup and was stopped before any engine was written. Its logs are
+archived under ignored `data/archive/`. This does not satisfy the gate.
+
 Gate: engine files exist under `data/edgellm/cosmos/engines/`; attach peak RAM
 and swap. Stop and report if a loaded Cosmos runtime reaches 5.0 GiB in
 tegrastats.
@@ -114,7 +117,8 @@ tegrastats.
 
 ### 5. CPU memory
 
-- [ ] Add a locally verified small BGE ONNX only after Cosmos residency passes.
+- [x] Consolidate the existing 127 MiB BGE-small ONNX candidate under ignored `data/models/` without loading it.
+- [ ] Verify that BGE ONNX on CPU only after Cosmos residency passes.
 - [ ] Tokenize/embed on CPU; never install `transformers` or PyTorch.
 - [ ] Persist vectors in repository-local ignored LanceDB data.
 - [ ] Measure combined Cosmos + voice + BGE/LanceDB RAM before enabling recall.

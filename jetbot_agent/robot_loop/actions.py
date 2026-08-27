@@ -9,8 +9,9 @@ parser) must stop when it elapses. This module never opens motors.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Union
+from typing import Any, Mapping, Union
 
 VX_MAX = 0.22
 WZ_MAX = 1.0
@@ -54,9 +55,10 @@ def _as_float(value: Any, default: float = 0.0) -> float:
     if isinstance(value, bool):
         return default
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return default
+    return number if math.isfinite(number) else default
 
 
 def _as_str(value: Any, max_chars: int) -> str:

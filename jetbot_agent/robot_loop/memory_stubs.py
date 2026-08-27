@@ -27,12 +27,13 @@ def lancedb_available() -> bool:
 
 
 class BgeEmbedder:
-    """CPU BGE-small later. No Hub fetch, no ONNX load in this stub."""
+    """CPU BGE-small later. No Hub fetch or ONNX load in this stub."""
 
     def __init__(self, model_path: str | None = None) -> None:
         self.model_path = model_path
         raise StageNotReady(
-            'BgeEmbedder waits for local BGE-small CPU weights (not on disk yet)'
+            'BgeEmbedder waits for CPU validation of data/models/'
+            'bge-small-en-v1.5-onnx/bge-small.onnx'
         )
 
     def encode(self, texts: Sequence[str]) -> List[List[float]]:

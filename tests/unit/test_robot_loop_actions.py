@@ -62,6 +62,16 @@ def test_drive_aliases_linear_angular():
     assert action.duration_s == pytest.approx(0.4)
 
 
+def test_drive_rejects_nonfinite_and_boolean_numbers():
+    action = parse_action(
+        {'action': 'drive', 'vx': float('nan'), 'wz': True, 'duration': float('inf')}
+    )
+    assert action.kind == 'drive'
+    assert action.vx == 0.0
+    assert action.wz == 0.0
+    assert action.duration_s == 0.0
+
+
 def test_speak_and_wait_and_weather():
     speak = parse_action('{"action": "speak", "text": "hello"}')
     assert speak.kind == 'speak'
