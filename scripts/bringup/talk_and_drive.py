@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Talk (or type) then drive: CSI JPEG → Cosmos JSON gate → I2C PWM.
 
+Motion words (forward / back / left / right / stop) skip Cosmos entirely and
+map to one fixed nudge each, spoken back before the wheels move. Cosmos still
+answers open-ended speech. See jetbot_agent/robot_loop/intents.py.
+
 Safety for this first live test:
-  vx abs <= 0.22, wz abs <= 1.0, duration_s <= 0.5, then Robot.stop().
+  vx abs <= LIVE_VX_MAX (0.35), wz abs <= 1.0, duration_s <= 0.5, then Robot.stop().
+  Motion-word nudges are 0.30 for 0.35 s (0.15 hummed, did not roll).
   Invalid JSON / parse fail / exception → Robot.stop().
   Empty / garbage ASR never calls Cosmos (motors stay stopped).
   ALSA: SSS1629 Mic playback/sidetone OFF, Speaker 75%.
@@ -48,12 +53,19 @@ from jetbot_agent.hardware.audio_interface import (  # noqa: E402
     resolve_sss1629,
 )
 from jetbot_agent.robot_loop.actions import (  # noqa: E402
-    VX_MAX,
     WZ_MAX,
     RobotAction,
     parse_action,
 )
 from jetbot_agent.robot_loop.csi_jpeg import CsiJpeg448  # noqa: E402
+from jetbot_agent.robot_loop.intents import (  # noqa: E402
+    LIVE_VX_MAX,
+    NUDGE_DURATION_S,
+    NUDGE_VX,
+    ack_phrase,
+    intent_action,
+    match_intent,
+)
 from jetbot_agent.robot_loop.cosmos_runtime import (  # noqa: E402
     COSMOS_ENGINE_DIR,
     CosmosResidentClient,
@@ -73,6 +85,8 @@ DRIVE_MAX_TOKENS = 80
 TEST_DURATION_MAX_S = 0.5
 READY_PHRASE = "I'm ready for your command"
 UNDERSTAND_FAIL_PHRASE = "I was unable to understand what you said."
+# Cosmos handles open-ended speech; the user still gets a word back, never silence.
+COSMOS_ACK_PHRASE = 'Okay'
 LISTEN_PHRASE = "Listening"
 MIC_SECONDS = 8
 ASR_MIN_LETTERS = 2
@@ -96,10 +110,10 @@ def clamp_test_action(action: RobotAction) -> RobotAction:
         return RobotAction(kind='stop', raw_ok=False, reason='parse_fail')
     vx = action.vx
     wz = action.wz
-    if vx > VX_MAX:
-        vx = VX_MAX
-    if vx < -VX_MAX:
-        vx = -VX_MAX
+    if vx > LIVE_VX_MAX:
+        vx = LIVE_VX_MAX
+    if vx < -LIVE_VX_MAX:
+        vx = -LIVE_VX_MAX
     if wz > WZ_MAX:
         wz = WZ_MAX
     if wz < -WZ_MAX:
@@ -300,6 +314,7 @@ class TalkDriveExecutor:
         self.playback_dev = playback_dev
         self.wav_dir = wav_dir
         self._moving = False
+        self.last_spoke = False
 
     def is_moving(self) -> bool:
         return self._moving
@@ -314,12 +329,14 @@ class TalkDriveExecutor:
             print('stop_failed', exc, file=sys.stderr, flush=True)
 
     def execute(self, action: RobotAction) -> None:
+        self.last_spoke = False
         try:
             action = clamp_test_action(action)
             if action.kind != 'drive' or (action.vx == 0.0 and action.wz == 0.0):
                 self.hard_stop()
                 if action.kind == 'speak' and action.say and self.tts is not None and self.playback_dev:
                     speak_short(self.tts, action.say, self.playback_dev, self.wav_dir)
+                    self.last_spoke = True
                 return
             duration = min(float(action.duration_s), TEST_DURATION_MAX_S)
             left, right = unicycle_wheels(action.vx, action.wz)
@@ -477,7 +494,7 @@ def main() -> int:
 
     robot = None
     if not args.no_pwm:
-        from jetbot import Robot
+        from jetbot.robot import Robot
 
         robot = Robot()
         robot.stop()
@@ -523,8 +540,8 @@ def main() -> int:
         speak_short(tts, READY_PHRASE, playback, wav_dir)
 
     print(
-        'talk_and_drive ready clamps vx<={0} wz<={1} duration_s<={2}'.format(
-            VX_MAX, WZ_MAX, TEST_DURATION_MAX_S
+        'talk_and_drive ready clamps vx<={0} wz<={1} duration_s<={2} nudge_vx={3} nudge_s={4}'.format(
+            LIVE_VX_MAX, WZ_MAX, TEST_DURATION_MAX_S, NUDGE_VX, NUDGE_DURATION_S
         ),
         flush=True,
     )
@@ -649,21 +666,41 @@ def main() -> int:
             if not asr_transcript_usable(speech):
                 executor.hard_stop()
                 consecutive_misses += 1
-                # Answer a voice we could not parse; never nag a silent room.
-                heard_voice = last_peak >= SPEECH_PEAK_FLOOR_FS
-                if heard_voice and consecutive_misses <= 2:
-                    speak_understand_fail(tts, playback, wav_dir)
-                else:
-                    print(
-                        'asr_miss_quiet run={0} peak={1:.3f}FS'.format(
-                            consecutive_misses, last_peak
-                        ),
-                        flush=True,
-                    )
+                speak_understand_fail(tts, playback, wav_dir)
                 if args.once is not None or args.max_turns == 1:
                     break
                 continue
             consecutive_misses = 0
+
+            # Motion words never reach Cosmos: fixed nudge, acknowledged first.
+            intent = match_intent(speech)
+            if intent is not None:
+                action = clamp_test_action(intent_action(intent))
+                ack = ack_phrase(intent)
+                print(
+                    json.dumps(
+                        {
+                            'route': 'intent',
+                            'speech': speech,
+                            'intent': intent,
+                            'ack': ack,
+                            'vx': action.vx,
+                            'wz': action.wz,
+                            'duration_s': action.duration_s,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                if tts is not None and ack:
+                    speak_short(tts, ack, playback, wav_dir)
+                if stop_requested:
+                    break
+                executor.execute(action)
+                executor.hard_stop()
+                if args.once is not None:
+                    break
+                continue
 
             jpeg = b''
             if camera is not None:
@@ -679,6 +716,7 @@ def main() -> int:
                 action = parse_action(None)
 
             row = {
+                'route': 'cosmos',
                 'speech': speech,
                 'gated_action': action.kind,
                 'vx': action.vx,
@@ -691,6 +729,8 @@ def main() -> int:
             print(json.dumps(row, ensure_ascii=False), flush=True)
             if not action.raw_ok:
                 speak_understand_fail(tts, playback, wav_dir)
+            elif not executor.last_spoke and tts is not None:
+                speak_short(tts, COSMOS_ACK_PHRASE, playback, wav_dir)
             executor.hard_stop()
             if args.once is not None:
                 break

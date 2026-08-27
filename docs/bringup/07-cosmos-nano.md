@@ -456,3 +456,26 @@ Build LLM then ViT **sequentially**, nothing else large resident (stop voice/age
 Remaining for Stage G: keep the Edge-LLM loader in `jetbot_agent/robot_loop/`
 without an HTTP sidecar. A parked look-then-log loop (JSON gate, duration-stop
 contract, no motors) passed on 2026-08-27; wiring `jetbot.Robot` is still open.
+
+## Motion intents are deterministic
+
+Cosmos is not trusted for velocities — it returned `vx=0.03` with
+`duration_s=2.0` for "move forward", `duration_s=0.01` on another turn, and a
+**positive** `vx` for "move backward". `jetbot_agent/robot_loop/intents.py` now
+maps motion words straight to one fixed nudge (`vx ±0.15` or `wz ±0.375`, always
+0.35 s, then `Robot.stop()`), speaks a short ack first, and never calls the
+model. Open-ended speech still goes to Cosmos.
+
+Wheel polarity is checked separately, wheels on the ground and floor clear:
+
+```bash
+# both wheels the same command; one wheel fighting the other means it is inverted
+.venv/bin/python3 scripts/bringup/wheel_polarity.py --seconds 5 --speed 0.15 --wheel both
+# name the inverted side, then trial the fix before editing the driver
+.venv/bin/python3 scripts/bringup/wheel_polarity.py --wheel left --seconds 2
+.venv/bin/python3 scripts/bringup/wheel_polarity.py --right-alpha 1.0 --seconds 2
+```
+
+A confirmed inversion belongs in `jetbot/robot.py` as
+`left_motor_alpha` / `right_motor_alpha` (this chassis ships `1.0` / `-1.0`), not
+in the intent mapping.
