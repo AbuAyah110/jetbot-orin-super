@@ -85,6 +85,7 @@ BEEP_RATE = 16000
 SPEECH_PEAK_FLOOR_FS = 0.04
 # Let the USB playback stream drain so capture never records the cue tail.
 PLAYBACK_SETTLE_S = 0.25
+DEBUG_AUDIO_DIR = REPO / 'data' / 'audio' / 'debug'
 WZ_WHEEL_SCALE = 0.4
 SPEAK_PLAY_MAX_CHARS = 64
 
@@ -208,6 +209,10 @@ def wav_energy(samples) -> tuple[float, float]:
             peak = magnitude
         total += magnitude * magnitude
     return peak, math.sqrt(total / len(samples))
+
+
+def dbfs(value: float) -> float:
+    return 20.0 * math.log10(value) if value > 0 else -120.0
 
 
 def stamp() -> str:
@@ -369,6 +374,13 @@ def parse_args() -> argparse.Namespace:
         help='Speak a short "Listening" cue before each capture after the first.',
     )
     parser.add_argument('--from-wav', metavar='PATH', help='Transcribe this wav instead of the mic (one turn).')
+    parser.add_argument(
+        '--keep-captures',
+        action='store_true',
+        default=True,
+        help='Persist every capture to data/audio/debug for offline ASR replay.',
+    )
+    parser.add_argument('--no-keep-captures', dest='keep_captures', action='store_false')
     parser.add_argument('--max-turns', type=int, default=0, help='Quit after N turns (0 = until killed).')
     parser.add_argument('--mic-seconds', type=int, default=MIC_SECONDS)
     parser.add_argument('--leave-loaded', action='store_true', default=True)
@@ -420,6 +432,8 @@ def main() -> int:
 
     wav_dir = REPO / 'data' / 'edgellm' / 'cosmos' / 'logs'
     wav_dir.mkdir(parents=True, exist_ok=True)
+    if args.keep_captures:
+        DEBUG_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
     alsa = apply_alsa_safety()
     print('alsa', json.dumps({k: alsa[k] for k in ('usb_name', 'alsa_id', 'alsa_capture', 'alsa_playback', 'sidetone_enabled', 'speaker_cap')}), flush=True)
@@ -534,12 +548,13 @@ def main() -> int:
 
     def cue_then_capture(cap_path: Path) -> None:
         """Beep, drain playback, then open the mic. Cue must not be recorded."""
-        nonlocal last_peak
         apply_alsa_safety()
         play_wav_once(beep_wav, playback)
         time.sleep(PLAYBACK_SETTLE_S)
         print(
-            '{0} mic_open {1}s — speak now'.format(stamp(), args.mic_seconds),
+            '{0} mic_open {1}s dev={2} — speak now'.format(
+                stamp(), args.mic_seconds, capture_dev
+            ),
             flush=True,
         )
         capture_mic_wav(args.mic_seconds, capture_dev, cap_path)
@@ -550,10 +565,24 @@ def main() -> int:
         samples, rate = read_wav_mono(path)
         peak, rms = wav_energy(samples)
         last_peak = peak
+        kept = ''
+        if args.keep_captures:
+            kept = str(DEBUG_AUDIO_DIR / 'mic_{0}.wav'.format(
+                time.strftime('%Y%m%d_%H%M%S')
+            ))
+            try:
+                write_wav(Path(kept), samples, rate)
+            except OSError as exc:
+                print('keep_capture_failed', exc, file=sys.stderr, flush=True)
+                kept = ''
         print(
-            'capture peak={0:.3f}FS rms={1:.4f}FS secs={2:.2f} voice={3}'.format(
-                peak, rms, (len(samples) / rate) if rate else 0.0,
+            'capture secs={0:.2f} rate={1} peak={2:.1f}dBFS rms={3:.1f}dBFS voice={4} wav={5}'.format(
+                (len(samples) / rate) if rate else 0.0,
+                rate,
+                dbfs(peak),
+                dbfs(rms),
                 peak >= SPEECH_PEAK_FLOOR_FS,
+                kept or '(not kept)',
             ),
             flush=True,
         )
