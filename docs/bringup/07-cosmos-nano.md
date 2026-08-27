@@ -184,12 +184,13 @@ data/edgellm/cosmos/
   logs/
 ```
 
-For compatibility, the old model destination may be a symlink:
+For compatibility, the old workspace is a symlink into repository-local data:
 
 ```bash
 mkdir -p /home/impulse110/Documents/jetbot-orin-super/data/edgellm/cosmos
-ln -s /home/impulse110/Documents/jetbot-orin-super/data/edgellm/cosmos \
-  ~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B
+ln -s /home/impulse110/Documents/jetbot-orin-super/data/edgellm \
+  ~/tensorrt-edgellm-workspace
+# data/edgellm/Cosmos-Reason2-2B is a local symlink to data/edgellm/cosmos
 ```
 
 Do not commit the Edge-LLM clone, ONNX, external data, engines, weights, or

@@ -39,7 +39,7 @@ llama.cpp artifacts were deleted from this device.
 | Stage | State | Evidence / gate |
 | --- | --- | --- |
 | A–E hardware + Python | Pass with documented notes | [bringup index](docs/bringup/README.md) |
-| F voice | Zipformer + Piper CPU branch exists; consolidate into this branch | [voice issue list](https://github.com/AbuAyah110/jetbot-orin-super/issues?q=is%3Aissue+stage-f) |
+| F voice | Zipformer + Piper CPU integrated; no model loaded in this pass | [voice issue list](https://github.com/AbuAyah110/jetbot-orin-super/issues?q=is%3Aissue+stage-f) |
 | G1 TensorRT | Pass | [#16](https://github.com/AbuAyah110/jetbot-orin-super/issues/16) |
 | G-Cosmos export | In progress on workstation | [#37](https://github.com/AbuAyah110/jetbot-orin-super/issues/37) |
 | G-Cosmos rsync | Ready; ONNX absent on Jetson | `test -f data/edgellm/cosmos/onnx/llm/model.onnx` |

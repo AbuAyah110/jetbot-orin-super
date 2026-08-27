@@ -18,7 +18,8 @@ Everything below `data/edgellm/` is ignored except this file. Never commit ONNX,
 externalized weights, TensorRT engines, model weights, or virtual environments.
 
 For compatibility with workstation commands, `$HOME/tensorrt-edgellm-workspace`
-may be a symlink to this directory. The Cosmos rsync destination remains:
+may be a symlink to this directory and local `Cosmos-Reason2-2B` may point to
+`cosmos`. The Cosmos rsync destination remains:
 
 ```text
 ~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/onnx/
