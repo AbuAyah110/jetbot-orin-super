@@ -47,15 +47,18 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | F voice | Zipformer + Piper CPU integrated; no model loaded in this pass | [voice issue list](https://github.com/AbuAyah110/jetbot-orin-super/issues?q=is%3Aissue+stage-f) |
 | G1 TensorRT | Pass | [#16](https://github.com/AbuAyah110/jetbot-orin-super/issues/16) |
 | G-Cosmos export | Reported complete in migrated workstation notes | [#37](https://github.com/AbuAyah110/jetbot-orin-super/issues/37) |
-| G-Cosmos rsync | ONNX found in stray path and relocated; checksum validation pending | `rsync -avP --checksum ...` |
-| G-Cosmos Jetson build | Blocked on checksum validation; canonical builder not run | `./scripts/bringup/llm_build_cosmos.sh` |
-| One-process scaffold | Parser/camera/prompts/stubs implemented; no model loaded | `pytest tests/unit/test_robot_loop_actions.py` |
-| Robot integration | Pending engines + safe stopped integration | Scripted parked episode; no direct PWM |
+| G-Cosmos rsync | ONNX present on device; INT4 FFN + FP16 vision, Edge-LLM 0.10.0 | `rsync -avP --checksum ...` for revalidation |
+| G-Cosmos Jetson build | **Pass** — SM87 `llm.engine` 777 MiB + `visual.engine` 785 MiB | `bash ~/jetbot-thin-stack/jetbot_vlm_agent/scripts/JETSON_BUILD.sh` |
+| G-Cosmos load / RAM | **Pass** — peak 5441/7620 MB, Cosmos delta **2.88 GiB**, under the 5.0 GiB abort | `tegrastats-cosmos-load.txt` |
+| One-process scaffold | Parser/camera/prompts/stubs implemented; engines exist, loader not yet wired | `pytest tests/unit/test_robot_loop_actions.py` |
+| Robot integration | Pending in-process loader + parked episode | Scripted parked episode; no direct PWM |
 | Memory | Stub only; local 127 MiB BGE ONNX candidate found, not loaded | CPU BGE vector round-trip in LanceDB |
 
-Post-idle-script baseline with Cursor connected: `free -h` **2.5 GiB used /
-4.7 GiB available**; tegrastats **2783–2784 / 7620 MB**, GR3D 0%; swap
-507/32768 MB; swappiness 10. Docker, snapd, and gdm are inactive. See
+Cosmos residency measured 2026-08-27: baseline **2487 / 7620 MB**, peak with the
+LLM + visual engines resident **5441 / 7620 MB**, so the Cosmos delta is
+**2.88 GiB** — below the 4.3–4.7 GiB planning band and below the 5.0 GiB abort
+threshold, so KV stays at 4096. The system-wide peak still includes ~1.5–1.9 GiB
+of Cursor remote. Swap peak 1575/32768 MB. See
 [Cosmos Nano bring-up](docs/bringup/07-cosmos-nano.md).
 
 ## Ordered execution
@@ -88,24 +91,29 @@ Gate:
 test -f /home/impulse110/Documents/jetbot-orin-super/data/edgellm/cosmos/onnx/llm/model.onnx
 ```
 
-### 3. Jetson — build SM87 engines
+### 3. Jetson — build SM87 engines — **done 2026-08-27**
 
 ```bash
-./scripts/bringup/llm_build_cosmos.sh
+export TENSORRT_EDGELLM_ROOT="$HOME/TensorRT-Edge-LLM"
+export COSMOS_ONNX_DIR="$HOME/jetbot-thin-stack/cosmos-onnx"
+export COSMOS_ENGINE_DIR="$HOME/jetbot-thin-stack/cosmos-engines"
+bash ~/jetbot-thin-stack/jetbot_vlm_agent/scripts/JETSON_BUILD.sh
 ```
 
-The script exits **2** while `onnx/llm/model.onnx` is absent. Once present it
-runs Edge-LLM v0.10.0 `llm_build` with batch 1, input 3072, KV 4096. Export
-flags are recorded by the script but are not passed to the v0.10.0 builder,
-which does not accept them. Build sequentially with no voice/model resident.
+`scripts/bringup/JETSON_BUILD.sh` is the tracked builder, mirrored into the
+thin-stack `scripts/` directory. It runs Edge-LLM v0.10.0 `llm_build` with
+batch 1, input 3072, KV 4096, then `visual_build` at 64/280/280 with FP16 ViT.
+`--externalize-weights` and `--int4-gemm-plugin-version` are export-time flags
+that this builder rejects; INT4 is already in the ONNX. No FP8, no NVFP4, no
+`--memPoolSize`, no on-device re-quantization. It exits 2 without ONNX and 4 if
+the ONNX is not INT4-FFN externalized.
 
-A legacy process outside the canonical repo unexpectedly started `llm_build`
-during cleanup and was stopped before any engine was written. Its logs are
-archived under ignored `data/archive/`. This does not satisfy the gate.
+Gate **passed**: `data/edgellm/cosmos/engines/llm/llm.engine` (777 MiB) and
+`engines/visual/visual.engine` (785 MiB); LLM engine generation 103.5 s, visual
+49.1 s; Cosmos load delta 2.88 GiB against the 5.0 GiB abort threshold.
 
-Gate: engine files exist under `data/edgellm/cosmos/engines/`; attach peak RAM
-and swap. Stop and report if a loaded Cosmos runtime reaches 5.0 GiB in
-tegrastats.
+Generate length is a runtime setting, not a build flag: drive 64–96 tokens at
+temperature 0, parked think 256–512, never think while `vx != 0`.
 
 ### 4. One-process parked robot integration
 
@@ -134,7 +142,8 @@ tegrastats.
 | --- | --- | --- |
 | `jetbot_agent/robot_loop/` | tracked | Locked loop parser, prompts, camera, runtime/memory stubs |
 | `scripts/JETSON_IDLE_RAM.sh` | tracked | Idempotent headless-memory preparation |
-| `scripts/bringup/llm_build_cosmos.sh` | tracked | Guarded on-device builder |
+| `scripts/bringup/JETSON_BUILD.sh` | tracked | Locked-flag SM87 engine builder (mirrored into thin-stack) |
+| `scripts/bringup/llm_build_cosmos.sh` | tracked | Repo-default wrapper around `JETSON_BUILD.sh` |
 | `docs/bringup/07-cosmos-nano.md` | tracked | Inventory, RAM, rsync/build evidence |
 | `third_party/tensorrt-edge-llm/` | ignored | Full Edge-LLM v0.10.0 clone/build |
 | `data/edgellm/cosmos/` | ignored | ONNX, external weights, SM87 engines, logs |

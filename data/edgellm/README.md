@@ -42,7 +42,14 @@ Compatibility paths are symlinks only; they do not duplicate payloads:
 ~/jetbot-thin-stack/cosmos-engines    -> data/edgellm/cosmos/engines
 ~/jetbot-thin-stack/bge-small-en-v1.5-onnx
                                       -> data/models/bge-small-en-v1.5-onnx
+~/TensorRT-Edge-LLM                   -> third_party/tensorrt-edge-llm
 ```
 
 The tracked production code is `jetbot_agent/robot_loop/`; do not edit the
-legacy compatibility tree as a second source checkout.
+legacy compatibility tree as a second source checkout. The thin-stack
+`scripts/JETSON_BUILD.sh` is a copy of the tracked
+`scripts/bringup/JETSON_BUILD.sh`, so both entry points run identical flags.
+
+SM87 engines built 2026-08-27 live at `cosmos/engines/llm/llm.engine` (777 MiB)
+and `cosmos/engines/visual/visual.engine` (785 MiB); build and tegrastats logs
+are under `cosmos/logs/`. All of it stays ignored.

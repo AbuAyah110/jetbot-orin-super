@@ -6,7 +6,129 @@ Ticket: [#17](https://github.com/AbuAyah110/jetbot-orin-super/issues/17) is now 
 
 This is the **locked robot VLM**: Cosmos-Reason2-2B via **TensorRT Edge-LLM v0.10.0**, in-process, INT4 LLM + FP16 ViT, **maxBatchSize 1**, **maxInputLen 3072**, **maxKVCacheCapacity 4096**. Do **not** quantize on this board. Do **not** install PyTorch. Do **not** start a Qwen rebuild. Do **not** load Hub **FP8 / NVFP4** Cosmos checkpoints (SM87 cannot run them).
 
-Motors were **not** driven. Camera loop was **not** started. No engine was loaded; there is **no Cosmos tegrastats**.
+**Engines are built and loaded as of 2026-08-27 13:24 CDT.** Motors were **not** driven and the camera loop was **not** started; the only runtime exercise was text-only `llm_inference` with the visual engine mapped.
+
+## Thin-stack path is the operator entry point
+
+The thin-stack tree the operator runs from is:
+
+```text
+~/jetbot-thin-stack/jetbot_vlm_agent/scripts/JETSON_BUILD.sh
+~/jetbot-thin-stack/cosmos-onnx/{llm,visual}
+~/jetbot-thin-stack/cosmos-engines/{llm,visual}
+```
+
+Those are **compatibility symlinks**, not a second copy. `jetbot_vlm_agent`
+resolves to the ignored `data/archive/legacy-thin-stack/`, and the model paths
+resolve to ignored `data/edgellm/cosmos/{onnx,engines}`. No multi-GB payload is
+duplicated or tracked. `~/TensorRT-Edge-LLM` is likewise a symlink to
+`third_party/tensorrt-edge-llm`, so the documented default
+`TENSORRT_EDGELLM_ROOT` resolves on this device.
+
+**This repository stays canonical for source.** The tracked robot loop is
+`jetbot_agent/robot_loop/`; the tracked builder is
+`scripts/bringup/JETSON_BUILD.sh`, mirrored into the thin-stack `scripts/`
+directory so either invocation runs identical flags. Do not treat the legacy
+tree as a second source checkout.
+
+## SM87 engine build — pass (2026-08-27)
+
+Built on this Jetson from the x86 INT4 ONNX. `aarch64` confirmed; Edge-LLM pin
+`v0.10.0`; TensorRT 10.3.0.30; CUDA 12.6 on `PATH`;
+`EDGELLM_PLUGIN_PATH=third_party/tensorrt-edge-llm/build/libNvInfer_edgellm_plugin.so`.
+
+Exact commands (the only flags `llm_build` v0.10.0 accepts for this model):
+
+```bash
+export TENSORRT_EDGELLM_ROOT="$HOME/TensorRT-Edge-LLM"
+export COSMOS_ONNX_DIR="$HOME/jetbot-thin-stack/cosmos-onnx"
+export COSMOS_ENGINE_DIR="$HOME/jetbot-thin-stack/cosmos-engines"
+cd "$TENSORRT_EDGELLM_ROOT"
+
+./build/examples/llm/llm_build \
+  --onnxDir "$COSMOS_ONNX_DIR/llm" \
+  --engineDir "$COSMOS_ENGINE_DIR/llm" \
+  --maxBatchSize 1 \
+  --maxInputLen 3072 \
+  --maxKVCacheCapacity 4096
+
+./build/examples/multimodal/visual_build \
+  --onnxDir "$COSMOS_ONNX_DIR/visual" \
+  --engineDir "$COSMOS_ENGINE_DIR" \
+  --minImageTokens 64 \
+  --maxImageTokens 280 \
+  --maxImageTokensPerImage 280
+```
+
+`--externalize-weights int4_ffn` and `--int4-gemm-plugin-version 1` are
+**export-time** flags. This binary rejects them (`unrecognized option`), and the
+INT4 layout is already inside the ONNX sidecars. No FP8, no NVFP4, no
+`--memPoolSize`, and no re-quantization on the Nano.
+
+| Artifact | Path (canonical) | Size | SHA256 |
+| --- | --- | --- | --- |
+| LLM engine | `data/edgellm/cosmos/engines/llm/llm.engine` | 777 MiB | `fdc2c15e8f62fa0756845ae8d96e6e7ffce5a3b535a299fc239769a631b5b0f7` |
+| Visual engine | `data/edgellm/cosmos/engines/visual/visual.engine` | 785 MiB | `3b5e8b8afff9677842e06026abaaeedabc47457d55cfb6a74fd7e6c72c8abf3b` |
+
+Engine directory totals 2.7 GiB (engine files plus `embedding.safetensors`
+594 MiB, `external_int4_ffn_weights.safetensors` 520 MiB, tokenizer, configs).
+`df -h /` after the build: **78G used / 30G avail (73%)**.
+
+Builder-recorded configuration, read back from the generated `config.json`:
+
+| Key | LLM engine | Visual engine |
+| --- | --- | --- |
+| `edgellm_version` | `0.10.0` | — |
+| `max_batch_size` | **1** | — |
+| `max_input_len` | **3072** | — |
+| `max_kv_cache_capacity` | **4096** | — |
+| `max_kv_pool_pages` | 32 | — |
+| `kv_cache_dtype` | **fp16** (not FP8) | — |
+| `external_weight_files[].kind` | **`int4_ffn_weights`** | — |
+| `min/max_image_tokens` | — | **64 / 280**, per-image **280** |
+| `vision_config.dtype` | — | **float16** |
+
+Build cost: LLM engine generation 103.5 s, peak TRT allocators CPU 2 MiB /
+GPU 1732 MiB, peak host during build+serialize 6300 MiB. Visual engine
+generation 49.1 s, peak allocators CPU 8 MiB / GPU 789 MiB, peak host
+4441 MiB. TensorRT skipped a 3456 MiB tactic against ~1890 MiB free and fell
+back; that is a warning, not a failure, and the build completed.
+
+## Cosmos load RAM — 2.88 GiB delta, under the 5.0 GiB halt line
+
+`llm_inference` loaded **only** the Cosmos LLM engine plus the visual engine
+(`--multimodalEngineDir`), text prompt only, temperature 0. The action runner is
+absent by design and its load failure is logged and ignored. tegrastats sampled
+at 500 ms, baseline captured before the process started:
+
+| Measure | Value |
+| --- | --- |
+| Baseline RAM (Cursor still connected) | **2487 / 7620 MB** |
+| Peak RAM with Cosmos resident | **5441 / 7620 MB** (5.31 GiB system-wide) |
+| **Cosmos delta over baseline** | **2954 MB = 2.88 GiB** |
+| Swap peak | 1575 / 32768 MB |
+| First load pass (independent) | baseline 2110 MB, peak 5403 MB, delta **3.22 GiB** |
+| TRT execution-context GPU allocation | 1549 MiB |
+| Shared execution-context memory | 161,483,264 B (base 161,483,264; vision 57,917,440) |
+
+Cosmos sits **below** the 4.3–4.7 GiB planning band and well below the
+**5.0 GiB abort threshold**, so the build was not halted and KV stays at 4096.
+The system-wide 5.31 GiB peak still includes ~1.5–1.9 GiB of Cursor remote,
+which disappears when the editor disconnects. Do not read 5.31 GiB as the
+Cosmos footprint.
+
+Functional sanity: a text request returned `ok` and a three-request drive-mode
+batch (temperature 0, `max_generate_length` 96) returned 3/3 successful with
+`finish_reason: end-of-sequence`.
+
+Generate length is a **runtime** setting owned by the orchestrator, not a build
+flag: drive mode 64–96 tokens at temperature 0, parked think mode 256–512.
+Never think while `vx != 0`.
+
+Logs (ignored, on-device): `data/edgellm/cosmos/logs/JETSON_BUILD.log`,
+`JETSON_BUILD_verify.log`, `llm_inference_load.log`,
+`llm_inference_drive.log`, `tegrastats-build.txt`,
+`tegrastats-cosmos-load.txt`.
 
 ## Qwen2.5-VL removed (2026-08-27)
 
@@ -228,55 +350,29 @@ Run on the workstation:
 rsync -avP --checksum ~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B-ModelOpt-INT4/onnx/ impulse110@192.168.50.65:~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/onnx/
 ```
 
-### Unexpected legacy build process stopped
+### Earlier interrupted build attempt
 
-During cleanup, an independently started legacy process was found running
-`llm_build` from `/home/impulse110/jetbot-thin-stack` (PID 381865, start
-12:59:32 CDT). This task did not launch it. It was terminated at 13:01 before
-an engine was written. The log showed repeated 3456 MB tactic requests with
-only about 1890 MB available. No visual build or model load occurred.
+A first `llm_build` run started at 12:59:32 CDT from the thin-stack paths and
+died at 13:01 when those paths were relocated mid-run, before any engine was
+written. Its logs are retained under ignored
+`data/archive/unexpected-build-attempt-2026-08-27/`. The successful build
+documented above is a clean restart from the same ONNX after the compatibility
+symlinks were in place.
 
-Logs were retained under ignored
-`data/archive/unexpected-build-attempt-2026-08-27/`. The deliberate canonical
-builder was **not** run. Re-run workstation checksum rsync first, then invoke
-only `scripts/bringup/llm_build_cosmos.sh`.
+## Rebuilding the engines
 
-## Exact on-device engine build (run only after ONNX arrives)
-
-Export-time (workstation, already required in the ONNX tree): `--externalize-weights int4_ffn --int4-gemm-plugin-version 1`.
-
-On this Jetson:
-
-```bash
-export PATH=/usr/local/cuda-12.6/bin:$PATH
-export REPO_ROOT=$HOME/Documents/jetbot-orin-super
-export EDGELLM_ROOT=$REPO_ROOT/third_party/tensorrt-edge-llm
-export EDGELLM_PLUGIN_PATH=$EDGELLM_ROOT/build/libNvInfer_edgellm_plugin.so
-export WORKSPACE_DIR=$REPO_ROOT/data/edgellm/cosmos
-
-# Confirm pin
-git -C "$EDGELLM_ROOT" describe --tags --always   # expect v0.10.0
-
-cd "$EDGELLM_ROOT"
-./build/examples/llm/llm_build \
-  --onnxDir "$WORKSPACE_DIR/onnx/llm" \
-  --engineDir "$WORKSPACE_DIR/engines/llm" \
-  --maxBatchSize 1 \
-  --maxInputLen 3072 \
-  --maxKVCacheCapacity 4096
-
-./build/examples/multimodal/visual_build \
-  --onnxDir "$WORKSPACE_DIR/onnx/visual" \
-  --engineDir "$WORKSPACE_DIR/engines" \
-  --minImageTokens 8 \
-  --maxImageTokens 2048 \
-  --maxImageTokensPerImage 2048
-```
-
-Wrapper that **exits 2** if ONNX is still missing:
+`scripts/bringup/JETSON_BUILD.sh` is the tracked builder and is mirrored to
+`~/jetbot-thin-stack/jetbot_vlm_agent/scripts/JETSON_BUILD.sh`. It refuses
+non-`aarch64`, exits 2 without `onnx/llm/model.onnx`, and exits 4 if the ONNX is
+not INT4-FFN externalized or advertises FP8/NVFP4 KV. `SKIP_IF_ENGINES=1`
+verifies without rebuilding. `scripts/bringup/llm_build_cosmos.sh` wraps it with
+repository-local defaults.
 
 ```bash
-./scripts/bringup/llm_build_cosmos.sh
+export TENSORRT_EDGELLM_ROOT="$HOME/TensorRT-Edge-LLM"
+export COSMOS_ONNX_DIR="$HOME/jetbot-thin-stack/cosmos-onnx"
+export COSMOS_ENGINE_DIR="$HOME/jetbot-thin-stack/cosmos-engines"
+bash ~/jetbot-thin-stack/jetbot_vlm_agent/scripts/JETSON_BUILD.sh
 ```
 
 Build LLM then ViT **sequentially**, nothing else large resident (stop voice/agent). Sample `tegrastats` throughout. Do not copy x86 `.engine` files.
@@ -287,11 +383,14 @@ Build LLM then ViT **sequentially**, nothing else large resident (stop voice/age
 | --- | --- |
 | HOME `/home/impulse110` | OK (Jetson) |
 | Qwen2.5-VL on disk | **Deleted** |
-| Cosmos-Reason2-2B rsync dir | **Ready** (`~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/`) |
-| Cosmos-Reason2 ONNX | **Present after stray-tree discovery**; workstation `rsync --checksum` validation required |
-| Canonical `llm_build` | **Not run**; unrelated legacy attempt discovered and stopped before engine output |
-| Cosmos engine loaded / tegrastats | **N/A** |
-| BGE | 127 MiB local CPU ONNX candidate moved to ignored data; not loaded |
-| Idle RAM (Cursor still on, post-apply) | **2.5 GiB used / 4.7 GiB available**; tegrastats 2783–2784 / 7620 MB |
+| Cosmos-Reason2 ONNX | **Present**; INT4 FFN + FP16 vision, Edge-LLM 0.10.0 |
+| `llm_build` (SM87, 3072 / 4096, batch 1) | **Pass** — `llm.engine` 777 MiB |
+| `visual_build` (64 / 280 / 280, FP16 ViT) | **Pass** — `visual.engine` 785 MiB |
+| Cosmos engine loaded / tegrastats | **Pass** — peak 5441/7620 MB, **delta 2.88 GiB**, under the 5.0 GiB abort |
+| Text inference sanity | **Pass** — 3/3 drive-mode requests, temperature 0, 96 tokens |
+| Motors / camera loop | **Not started** |
+| BGE | 127 MiB local CPU ONNX candidate in ignored data; not loaded |
 
-After checksum rsync: run `llm_build_cosmos.sh`, attach peak RAM/swap, and abort if tegrastats ≥ 5.0 GiB on a loaded inference engine.
+Remaining for Stage G: wire the Edge-LLM loader into
+`jetbot_agent/robot_loop/` in-process (no HTTP sidecar), then a parked episode
+with the 448² CSI JPEG.
