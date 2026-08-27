@@ -11,8 +11,11 @@ sys.path.insert(0, str(ROOT / 'scripts' / 'bringup'))
 from jetbot_agent.robot_loop.actions import parse_action  # noqa: E402
 
 from talk_and_drive import (  # noqa: E402
+    SPEAK_PLAY_MAX_CHARS,
     TEST_DURATION_MAX_S,
+    UNDERSTAND_FAIL_PHRASE,
     TalkDriveExecutor,
+    asr_transcript_usable,
     clamp_test_action,
     unicycle_wheels,
 )
@@ -63,3 +66,13 @@ def test_executor_parse_fail_and_drive_always_stop():
 def test_unicycle_forward():
     left, right = unicycle_wheels(0.22, 0.0)
     assert left == right == 0.22
+
+
+def test_asr_miss_rejects_empty_and_garbage():
+    assert asr_transcript_usable('') is False
+    assert asr_transcript_usable('   ') is False
+    assert asr_transcript_usable('.') is False
+    assert asr_transcript_usable('a') is False
+    assert asr_transcript_usable('go') is True
+    assert asr_transcript_usable('drive forward') is True
+    assert len(UNDERSTAND_FAIL_PHRASE) <= SPEAK_PLAY_MAX_CHARS

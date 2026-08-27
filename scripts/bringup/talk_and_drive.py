@@ -4,11 +4,12 @@
 Safety for this first live test:
   vx abs <= 0.22, wz abs <= 1.0, duration_s <= 0.5, then Robot.stop().
   Invalid JSON / parse fail / exception → Robot.stop().
+  Empty / garbage ASR never calls Cosmos (motors stay stopped).
   ALSA: SSS1629 Mic playback/sidetone OFF, Speaker 75%.
   Never cat the old Cosmos FIFO; engines load via cosmos_resident.
 
-Interactive: Enter = 3 s mic ASR; type text; q quits with stop.
-When loaded, speaks a short ready phrase, then listens.
+Default live UX: --auto-listen records ~4 s in a cycle (no Enter).
+SIGTERM / Ctrl-C stops motors and exits. Ready TTS, then listen.
 """
 
 from __future__ import annotations
@@ -61,9 +62,12 @@ from jetbot_agent.robot_loop.orchestrator import (  # noqa: E402
 DRIVE_MAX_TOKENS = 80
 TEST_DURATION_MAX_S = 0.5
 READY_PHRASE = "I'm ready for your command"
-MIC_SECONDS = 3
+UNDERSTAND_FAIL_PHRASE = "I was unable to understand what you said."
+LISTEN_PHRASE = "Listening"
+MIC_SECONDS = 4
+ASR_MIN_LETTERS = 2
 WZ_WHEEL_SCALE = 0.4
-SPEAK_PLAY_MAX_CHARS = 40
+SPEAK_PLAY_MAX_CHARS = 64
 
 
 def clamp_test_action(action: RobotAction) -> RobotAction:
@@ -142,6 +146,28 @@ def play_wav_once(path: Path, playback_dev: str) -> None:
         pkill_aplay()
 
 
+def asr_transcript_usable(text: str) -> bool:
+    """False for empty, whitespace-only, or garbage/very short ASR."""
+    speech = ' '.join((text or '').split())
+    if not speech or len(speech) < ASR_MIN_LETTERS:
+        return False
+    letters = sum(1 for ch in speech if ch.isalpha())
+    return letters >= ASR_MIN_LETTERS
+
+
+def write_silence_wav(path: Path, seconds: float = 0.25, sample_rate: int = 16000) -> Path:
+    nframes = max(0, int(float(seconds) * int(sample_rate)))
+    write_wav(path, [0.0] * nframes, sample_rate)
+    return path
+
+
+def speak_understand_fail(tts, playback_dev: str, wav_dir: Path) -> None:
+    print('understand_fail_tts', UNDERSTAND_FAIL_PHRASE, flush=True)
+    if tts is None or not playback_dev:
+        return
+    speak_short(tts, UNDERSTAND_FAIL_PHRASE, playback_dev, wav_dir)
+
+
 def speak_short(tts, text: str, playback_dev: str, wav_dir: Path) -> None:
     phrase = (text or '').strip()
     if not phrase:
@@ -158,7 +184,7 @@ def speak_short(tts, text: str, playback_dev: str, wav_dir: Path) -> None:
 def capture_mic_wav(seconds: int, capture_dev: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(['pkill', '-x', 'arecord'], check=False, capture_output=True)
-    subprocess.run(
+    proc = subprocess.run(
         [
             'arecord',
             '-D',
@@ -173,9 +199,11 @@ def capture_mic_wav(seconds: int, capture_dev: str, dest: Path) -> Path:
             str(int(seconds)),
             str(dest),
         ],
-        check=True,
+        check=False,
         timeout=int(seconds) + 8,
     )
+    if proc.returncode != 0:
+        raise RuntimeError('arecord_failed rc={0}'.format(proc.returncode))
     return dest
 
 
@@ -272,16 +300,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--once', metavar='TEXT', help='One typed (or fake ASR) command, then quit.')
     parser.add_argument('--smoke-stop', action='store_true',
                         help='No-travel smoke: fake ASR "stop", skip Cosmos, no PWM.')
+    parser.add_argument(
+        '--smoke-empty-asr',
+        action='store_true',
+        help='Transcribe a silent wav, speak the ASR-miss phrase, skip Cosmos/PWM, quit.',
+    )
+    parser.add_argument(
+        '--auto-listen',
+        action='store_true',
+        help='Record mic in a loop (no Enter). Implied when stdin is not a TTY.',
+    )
+    parser.add_argument(
+        '--listen-prompt',
+        action='store_true',
+        help='Speak a short "Listening" cue before each capture after the first.',
+    )
+    parser.add_argument('--from-wav', metavar='PATH', help='Transcribe this wav instead of the mic (one turn).')
+    parser.add_argument('--max-turns', type=int, default=0, help='Quit after N turns (0 = until killed).')
     parser.add_argument('--mic-seconds', type=int, default=MIC_SECONDS)
     parser.add_argument('--leave-loaded', action='store_true', default=True)
     return parser.parse_args()
 
 
-def prompt_user(once_text: Optional[str]) -> Optional[str]:
+def prompt_user(once_text: Optional[str], mic_seconds: int) -> Optional[str]:
     if once_text is not None:
         return once_text
     try:
-        raw = input('Command (Enter = {0}s mic, q = quit): '.format(MIC_SECONDS))
+        raw = input('Command (Enter = {0}s mic, q = quit): '.format(mic_seconds))
     except EOFError:
         return 'q'
     return raw
@@ -296,6 +341,24 @@ def main() -> int:
         args.no_camera = True
         args.skip_asr = True
         args.skip_ready_tts = True
+    if args.smoke_empty_asr:
+        args.skip_cosmos = True
+        args.no_pwm = True
+        args.no_camera = True
+        args.skip_ready_tts = True
+        args.skip_asr = True
+        args.max_turns = 1
+        args.auto_listen = False
+    if (
+        not args.auto_listen
+        and args.once is None
+        and not args.smoke_stop
+        and not args.smoke_empty_asr
+        and not sys.stdin.isatty()
+    ):
+        args.auto_listen = True
+    if args.auto_listen:
+        args.listen_prompt = True
 
     os.environ.setdefault(
         'EDGELLM_PLUGIN_PATH',
@@ -310,7 +373,8 @@ def main() -> int:
 
     tts = None
     asr = None
-    if not args.skip_ready_tts or args.allow_speak_actions:
+    need_tts = not args.smoke_stop
+    if need_tts:
         from jetbot_agent.audio.piper_tts import PiperTTS
 
         tts = PiperTTS(num_threads=2)
@@ -318,6 +382,10 @@ def main() -> int:
         from jetbot_agent.audio.zipformer_asr import ZipformerASR
 
         asr = ZipformerASR(num_threads=2)
+
+    if args.smoke_empty_asr and not args.from_wav:
+        args.from_wav = str(wav_dir / 'talk_and_drive_silence.wav')
+        write_silence_wav(Path(args.from_wav), seconds=0.0)
 
     fifo_info = kill_oneshot_fifo_holder(FIFO_PATH)
     print('fifo_cleanup', json.dumps(fifo_info), flush=True)
@@ -367,15 +435,25 @@ def main() -> int:
         camera = CsiJpeg448(sensor_id=0, fps=15)
         camera.open()
 
+    stop_requested = False
+    first_capture = True
+
     def _shutdown(_signum=None, _frame=None) -> None:
+        nonlocal stop_requested
+        stop_requested = True
         executor.hard_stop()
+        subprocess.run(['pkill', '-x', 'arecord'], check=False, capture_output=True)
+        pkill_aplay()
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
+    playback = alsa['alsa_playback']
+    capture_dev = alsa['alsa_capture']
+
     if tts is not None and not args.skip_ready_tts:
         print('ready_tts', READY_PHRASE, flush=True)
-        speak_short(tts, READY_PHRASE, alsa['alsa_playback'], wav_dir)
+        speak_short(tts, READY_PHRASE, playback, wav_dir)
 
     print(
         'talk_and_drive ready clamps vx<={0} wz<={1} duration_s<={2}'.format(
@@ -383,39 +461,94 @@ def main() -> int:
         ),
         flush=True,
     )
-    print(
-        'Give the robot space. Enter = {0}s mic, type a command, or q to quit.'.format(
-            args.mic_seconds
-        ),
-        flush=True,
-    )
+    if args.auto_listen:
+        print(
+            'auto-listen {0}s. Speak after you hear ready or Listening. Wheels may move. SIGTERM/Ctrl-C stops.'.format(
+                args.mic_seconds
+            ),
+            flush=True,
+        )
+    else:
+        print(
+            'Give the robot space. Enter = {0}s mic, type a command, or q to quit.'.format(
+                args.mic_seconds
+            ),
+            flush=True,
+        )
+
+    def transcribe_path(path: Path) -> str:
+        samples, rate = read_wav_mono(path)
+        if asr is None:
+            return ''
+        if not samples:
+            return ''
+        return asr.transcribe(samples, rate).strip()
+
+    def collect_speech() -> Optional[str]:
+        nonlocal first_capture
+        if args.once is not None:
+            return args.once
+        if args.from_wav:
+            path = Path(args.from_wav)
+            args.from_wav = None
+            print('asr_from_wav', str(path), flush=True)
+            speech = transcribe_path(path)
+            print('asr', json.dumps({'text': speech}), flush=True)
+            return speech
+        if args.auto_listen:
+            if asr is None:
+                print('asr_unavailable', flush=True)
+                return None
+            apply_alsa_safety()
+            if args.listen_prompt and tts is not None and not first_capture:
+                speak_short(tts, LISTEN_PHRASE, playback, wav_dir)
+            first_capture = False
+            cap_path = wav_dir / 'talk_and_drive_mic.wav'
+            print('listening {0}s — speak now'.format(args.mic_seconds), flush=True)
+            try:
+                capture_mic_wav(args.mic_seconds, capture_dev, cap_path)
+            except Exception as exc:
+                print('capture_failed', exc, file=sys.stderr, flush=True)
+                return ''
+            if stop_requested:
+                return None
+            speech = transcribe_path(cap_path)
+            print('asr', json.dumps({'text': speech}), flush=True)
+            return speech
+        typed = prompt_user(None, args.mic_seconds)
+        if typed is None or typed.strip().lower() in {'q', 'quit', 'exit'}:
+            return None
+        speech = typed.strip()
+        if speech != '':
+            return speech
+        if asr is None:
+            print('asr_unavailable: type a command or omit --skip-asr', flush=True)
+            return ''
+        apply_alsa_safety()
+        cap_path = wav_dir / 'talk_and_drive_mic.wav'
+        print('listening {0}s — speak now'.format(args.mic_seconds), flush=True)
+        capture_mic_wav(args.mic_seconds, capture_dev, cap_path)
+        speech = transcribe_path(cap_path)
+        print('asr', json.dumps({'text': speech}), flush=True)
+        return speech
 
     exit_code = 0
+    turns = 0
     try:
-        while True:
+        while not stop_requested:
             executor.hard_stop()
-            typed = prompt_user(args.once)
-            if typed is None or typed.strip().lower() in {'q', 'quit', 'exit'}:
+            if args.max_turns and turns >= args.max_turns:
                 break
-            speech = typed.strip()
-            if speech == '':
-                if asr is None:
-                    print('asr_unavailable: type a command or omit --skip-asr', flush=True)
-                    if args.once:
-                        break
-                    continue
-                apply_alsa_safety()
-                cap_path = wav_dir / 'talk_and_drive_mic.wav'
-                print('listening {0}s'.format(args.mic_seconds), flush=True)
-                capture_mic_wav(args.mic_seconds, alsa['alsa_capture'], cap_path)
-                samples, rate = read_wav_mono(cap_path)
-                speech = asr.transcribe(samples, rate).strip()
-                print('asr', json.dumps({'text': speech}), flush=True)
-                if not speech:
-                    executor.hard_stop()
-                    if args.once:
-                        break
-                    continue
+            speech = collect_speech()
+            if stop_requested or speech is None:
+                break
+            turns += 1
+            if not asr_transcript_usable(speech):
+                executor.hard_stop()
+                speak_understand_fail(tts, playback, wav_dir)
+                if args.once is not None or args.max_turns == 1:
+                    break
+                continue
 
             jpeg = b''
             if camera is not None:
@@ -441,15 +574,20 @@ def main() -> int:
                 'model_text': getattr(runtime, 'last_text', '')[:400],
             }
             print(json.dumps(row, ensure_ascii=False), flush=True)
+            if not action.raw_ok:
+                speak_understand_fail(tts, playback, wav_dir)
             executor.hard_stop()
             if args.once is not None:
                 break
+    except KeyboardInterrupt:
+        executor.hard_stop()
     except Exception as exc:
         print('loop_exception', exc, file=sys.stderr, flush=True)
         executor.hard_stop()
         exit_code = 1
     finally:
         executor.hard_stop()
+        subprocess.run(['pkill', '-x', 'arecord'], check=False, capture_output=True)
         pkill_aplay()
         if camera is not None:
             camera.close()
