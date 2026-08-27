@@ -32,6 +32,16 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+# traitlets / qwiic / Adafruit_MotorHAT are user installs and GStreamer's gi is
+# a system install; neither is in the voice venv. Append (never prepend) so the
+# venv's sherpa-onnx and NumPy 2 keep priority over the system NumPy 1 wheels.
+for _extra_site in (
+    Path.home() / '.local' / 'lib' / 'python3.10' / 'site-packages',
+    Path('/usr/lib/python3/dist-packages'),
+):
+    if _extra_site.is_dir() and str(_extra_site) not in sys.path:
+        sys.path.append(str(_extra_site))
+
 from jetbot_agent.hardware.audio_interface import (  # noqa: E402
     apply_safe_mixer_baseline,
     mixer_report,
