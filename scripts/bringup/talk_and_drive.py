@@ -544,6 +544,7 @@ def main() -> int:
 
     exit_code = 0
     turns = 0
+    consecutive_misses = 0
     try:
         while not stop_requested:
             executor.hard_stop()
@@ -555,10 +556,16 @@ def main() -> int:
             turns += 1
             if not asr_transcript_usable(speech):
                 executor.hard_stop()
-                speak_understand_fail(tts, playback, wav_dir)
+                consecutive_misses += 1
+                # Say it once per run of misses; an empty room must not be nagged.
+                if consecutive_misses <= 1:
+                    speak_understand_fail(tts, playback, wav_dir)
+                else:
+                    print('asr_miss_silent', consecutive_misses, flush=True)
                 if args.once is not None or args.max_turns == 1:
                     break
                 continue
+            consecutive_misses = 0
 
             jpeg = b''
             if camera is not None:
