@@ -18,9 +18,11 @@ from jetbot_agent.robot_loop.prompts import prompt_suffix
 
 SYSTEM_PROMPT = """You are the on-board planner for a small indoor JetBot.
 Use the current 448x448 JPEG, optional speech, short text history, and optional
-memory. Reply with exactly one JSON object. Allowed actions are stop, drive,
-speak, wait, and weather. If blocked, uncertain, or parsing could be unsafe,
-stop. Never emit PWM, wheel values, Python, markdown, or extra prose."""
+memory. Reply with exactly one JSON object with keys action, vx, wz, duration_s,
+say, goal, and reason. Allowed actions are stop, drive, speak, wait, and weather.
+Choose a heading, but motor power and duration are calibrated downstream. If
+the requested object is not visible, blocked, uncertain, or parsing could be
+unsafe, stop and use a short say. Never emit PWM, Python, markdown, or prose."""
 
 
 class GenerateRuntime(Protocol):
@@ -100,7 +102,8 @@ class OneProcessOrchestrator:
         self.drive_max_tokens = tokens
         self.think_max_tokens = int(think_max_tokens)
 
-    def tick(self, request: LoopInput) -> RobotAction:
+    def plan(self, request: LoopInput) -> RobotAction:
+        """Generate and gate one action without applying model motion."""
         # Hold stop for the whole generate (~1.5 s). Wheels never start here.
         self.executor.execute(RobotAction(kind='stop', vx=0.0, wz=0.0, duration_s=0.0))
         use_drive = self.drive_mode or bool(self.executor.is_moving())
@@ -121,15 +124,6 @@ class OneProcessOrchestrator:
         except Exception:
             action = parse_action(None)
 
-        # Weather is data, never policy. Hold still while fetching it.
-        if action.kind == 'weather':
-            self.executor.execute(RobotAction(kind='stop'))
-            if self.weather is not None:
-                result = self.weather(action.query or request.speech)
-                self.history.add('tool', result)
-        else:
-            self.executor.execute(action)
-
         self.history.add('user', request.speech)
         self.history.add(
             'assistant',
@@ -146,4 +140,17 @@ class OneProcessOrchestrator:
                 separators=(',', ':'),
             ),
         )
+        return action
+
+    def tick(self, request: LoopInput) -> RobotAction:
+        """Plan, then execute one bounded action."""
+        action = self.plan(request)
+        # Weather is data, never policy. Hold still while fetching it.
+        if action.kind == 'weather':
+            self.executor.execute(RobotAction(kind='stop'))
+            if self.weather is not None:
+                result = self.weather(action.query or request.speech)
+                self.history.add('tool', result)
+        else:
+            self.executor.execute(action)
         return action

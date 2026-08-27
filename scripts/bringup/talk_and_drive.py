@@ -25,6 +25,7 @@ import array
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -55,6 +56,7 @@ from jetbot_agent.hardware.audio_interface import (  # noqa: E402
 )
 from jetbot_agent.robot_loop.actions import (  # noqa: E402
     RobotAction,
+    extract_json_object,
     parse_action,
 )
 from jetbot_agent.robot_loop.csi_jpeg import CsiJpeg448  # noqa: E402
@@ -89,6 +91,7 @@ READY_PHRASE = "I'm ready for your command"
 UNDERSTAND_FAIL_PHRASE = "I was unable to understand what you said."
 # Cosmos handles open-ended speech; the user still gets a word back, never silence.
 COSMOS_ACK_PHRASE = 'Okay'
+VISION_UNAVAILABLE_PHRASE = "Vision isn't available"
 LISTEN_PHRASE = "Listening"
 MIC_SECONDS = 8
 ASR_MIN_LETTERS = 2
@@ -131,6 +134,103 @@ def clamp_test_action(action: RobotAction) -> RobotAction:
         if action.kind == 'stop':
             duration = 0.0
     return replace(action, vx=vx, wz=wz, duration_s=duration)
+
+
+_NOT_VISIBLE_MARKERS = (
+    "don't see",
+    'do not see',
+    "can't see",
+    'cannot see',
+    'not visible',
+    'no visible',
+)
+
+
+def calibrate_cosmos_action(action: RobotAction) -> RobotAction:
+    """Use Cosmos only for heading; replace every drive value with calibration."""
+    if action is None or not action.raw_ok:
+        return RobotAction(kind='stop', raw_ok=False, reason='parse_fail')
+    if action.kind != 'drive':
+        return replace(action, vx=0.0, wz=0.0, duration_s=0.0)
+
+    hint = ' '.join((action.goal, action.say, action.reason)).lower()
+    if any(marker in hint for marker in _NOT_VISIBLE_MARKERS):
+        return replace(action, kind='stop', vx=0.0, wz=0.0, duration_s=0.0)
+
+    if re.search(r'\b(left|counterclockwise)\b', hint):
+        heading = 'left'
+    elif re.search(r'\b(right|clockwise)\b', hint):
+        heading = 'right'
+    elif re.search(r'\b(back|backward|backwards|reverse)\b', hint):
+        heading = 'back'
+    elif action.wz > 0.0:
+        heading = 'left'
+    elif action.wz < 0.0:
+        heading = 'right'
+    elif action.vx < 0.0:
+        heading = 'back'
+    else:
+        heading = 'forward'
+
+    calibrated = intent_action(heading)
+    return replace(
+        calibrated,
+        say=action.say,
+        goal=action.goal,
+        reason=action.reason or 'cosmos_heading_{0}'.format(heading),
+        raw_ok=True,
+    )
+
+
+def recover_cosmos_say(action: RobotAction, model_text: str) -> RobotAction:
+    """Retain the optional short say field for pre-pulse acknowledgement."""
+    try:
+        value = extract_json_object(model_text).get('say', '')
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return action
+    if not isinstance(value, str):
+        return action
+    say = ' '.join(value.split())
+    if not say or say in {'"', "'", '\\', '\\"', '"\\'}:
+        return action
+    return replace(action, say=say[:SPEAK_PLAY_MAX_CHARS])
+
+
+def _target_phrase(speech: str, goal: str = '') -> str:
+    target = ' '.join((goal or '').strip().split())
+    if target:
+        target = re.sub(
+            r'^(?:move|go|drive|head|navigate)\s+(?:toward|towards|to)\s+',
+            '',
+            target,
+            flags=re.IGNORECASE,
+        )
+    if not target:
+        match = re.search(r'\b(?:toward|towards|to)\s+(.+)$', speech or '', re.IGNORECASE)
+        target = match.group(1).strip(' .,!?:;') if match else ''
+    return target[:36]
+
+
+def cosmos_feedback(action: RobotAction, speech: str) -> str:
+    """Short spoken acknowledgement or fail-closed explanation."""
+    target = _target_phrase(speech, action.goal)
+    if action.kind == 'drive':
+        if target and action.vx > 0.0 and action.wz == 0.0:
+            return ('Moving toward ' + target)[:SPEAK_PLAY_MAX_CHARS]
+        if action.wz > 0.0:
+            return 'Turning left'
+        if action.wz < 0.0:
+            return 'Turning right'
+        if action.vx < 0.0:
+            return 'Moving backward'
+        return 'Okay, looking'
+    if action.say:
+        return action.say[:SPEAK_PLAY_MAX_CHARS]
+    if action.kind == 'stop':
+        if target:
+            return ("I don't see " + target)[:SPEAK_PLAY_MAX_CHARS]
+        return 'Stopping'
+    return COSMOS_ACK_PHRASE
 
 
 def unicycle_wheels(vx: float, wz: float) -> tuple[float, float]:
@@ -517,9 +617,15 @@ def main() -> int:
     )
 
     camera: Optional[CsiJpeg448] = None
+    camera_error = ''
     if not args.no_camera:
-        camera = CsiJpeg448(sensor_id=0, fps=15)
-        camera.open()
+        try:
+            camera = CsiJpeg448(sensor_id=0, fps=15)
+            camera.open()
+        except Exception as exc:
+            camera_error = str(exc)
+            camera = None
+            print('camera_open_failed', exc, file=sys.stderr, flush=True)
 
     stop_requested = False
     first_capture = True
@@ -704,14 +810,37 @@ def main() -> int:
                     break
                 continue
 
-            jpeg = b''
-            if camera is not None:
+            if camera is None:
+                executor.hard_stop()
+                print(
+                    json.dumps(
+                        {'route': 'cosmos', 'speech': speech, 'camera_error': camera_error or 'camera_disabled'}
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
+                if args.once is not None:
+                    break
+                continue
+            try:
                 jpeg = camera.capture_jpeg()
+                if not jpeg:
+                    raise RuntimeError('CSI JPEG capture returned no bytes')
                 (wav_dir / 'talk_and_drive.jpg').write_bytes(jpeg)
+            except Exception as exc:
+                executor.hard_stop()
+                print('camera_capture_failed', exc, file=sys.stderr, flush=True)
+                if tts is not None:
+                    speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
+                if args.once is not None:
+                    break
+                continue
 
             try:
-                action = orch.tick(LoopInput(speech=speech, goal=speech, image_jpeg=jpeg or None))
-                action = clamp_test_action(action)
+                planned = orch.plan(LoopInput(speech=speech, goal=speech, image_jpeg=jpeg))
+                planned = recover_cosmos_say(planned, getattr(runtime, 'last_text', ''))
+                action = calibrate_cosmos_action(planned)
             except Exception as exc:
                 print('tick_exception', exc, file=sys.stderr, flush=True)
                 executor.hard_stop()
@@ -729,10 +858,14 @@ def main() -> int:
                 'model_text': getattr(runtime, 'last_text', '')[:400],
             }
             print(json.dumps(row, ensure_ascii=False), flush=True)
+            feedback = cosmos_feedback(action, speech)
             if not action.raw_ok:
                 speak_understand_fail(tts, playback, wav_dir)
-            elif not executor.last_spoke and tts is not None:
-                speak_short(tts, COSMOS_ACK_PHRASE, playback, wav_dir)
+            elif tts is not None and feedback:
+                speak_short(tts, feedback, playback, wav_dir)
+            if stop_requested:
+                break
+            executor.execute(action)
             executor.hard_stop()
             if args.once is not None:
                 break

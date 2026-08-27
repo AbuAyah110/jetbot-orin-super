@@ -54,14 +54,22 @@ ACK_PHRASES = {
     STOP: 'Stopping',
 }
 
-# Stop wins over everything; backward is checked before forward so "backward"
-# can never fall through to the forward nudge.
+# These are deliberately full-command patterns. A direction word embedded in
+# an object-relative request ("move toward the red object on the left") must
+# reach Cosmos with the camera image instead of becoming a blind turn.
+_FILLER = r'(?:please|now|robot|jetbot)'
 _INTENT_PATTERNS = (
-    (STOP, re.compile(r'\b(stop|halt|freeze|stand\s+still)\b')),
-    (BACK, re.compile(r'\b(backward|backwards|back\s+up|go\s+back|reverse|back)\b')),
-    (FORWARD, re.compile(r'\b(forward|forwards|ahead|straight)\b')),
-    (LEFT, re.compile(r'\bleft\b')),
-    (RIGHT, re.compile(r'\bright\b')),
+    (
+        STOP,
+        re.compile(
+            r'(?:stop|halt|freeze|stand\s+still)'
+            r'(?:\s+(?:moving\s+)?(?:forward|forwards|backward|backwards|left|right))?'
+        ),
+    ),
+    (BACK, re.compile(r'(?:(?:move|go|drive)\s+)?(?:backward|backwards|back|reverse|back\s+up)')),
+    (FORWARD, re.compile(r'(?:(?:move|go|drive)\s+)?(?:forward|forwards|ahead|straight)')),
+    (LEFT, re.compile(r'(?:(?:turn|go|move|drive)\s+)?left')),
+    (RIGHT, re.compile(r'(?:(?:turn|go|move|drive)\s+)?right')),
 )
 
 
@@ -73,12 +81,19 @@ def normalize_transcript(text: str) -> str:
 
 
 def match_intent(text: str) -> Optional[str]:
-    """Return a motion intent for loose ASR text, or None for open-ended speech."""
+    """Return an intent only when the whole transcript is a bare direction."""
     speech = normalize_transcript(text)
     if not speech:
         return None
+    speech = re.sub(r'^(?:' + _FILLER + r'\s+)*', '', speech)
+    speech = re.sub(r'(?:\s+' + _FILLER + r')*$', '', speech)
     for intent, pattern in _INTENT_PATTERNS:
-        if pattern.search(speech):
+        # ASR commonly repeats a complete phrase. Repeats are accepted only
+        # when every repeated segment resolves to the same bare command.
+        repeated = re.compile(
+            r'^(?:' + pattern.pattern + r')(?:\s+(?:' + pattern.pattern + r'))*$'
+        )
+        if repeated.fullmatch(speech):
             return intent
     return None
 

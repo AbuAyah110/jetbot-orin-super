@@ -5,8 +5,10 @@ from __future__ import annotations
 DRIVE_PROMPT_SUFFIX = (
     'You are driving. Reply with one JSON object only. '
     'Allowed action kinds: stop, drive, speak, wait, weather. '
-    'Do not use extended thinking. Prefer a short stop or a brief drive. '
-    'Clamps: vx abs <= 0.22, wz abs <= 1.0, then stop when duration elapses.'
+    'Choose only the heading: drive forward/backward or turn left/right. '
+    'Motor power and duration are calibrated downstream; your velocity magnitudes are ignored. '
+    'For an object-relative command, inspect the current image. If the target is not visible, '
+    'return stop and a short say field. Do not use extended thinking.'
 )
 
 PARKED_THINK_PROMPT_SUFFIX = (

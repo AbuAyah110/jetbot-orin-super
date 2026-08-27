@@ -59,6 +59,9 @@ def test_motion_words_match_loosely(transcript, expected):
         'WHAT IS THE WEATHER TODAY',
         'TELL ME A JOKE',
         'WHO ARE YOU',
+        'MOVE TOWARD THE RED OBJECT',
+        'GO TO THE CHAIR',
+        'TURN LEFT TOWARD THE DOOR',
     ],
 )
 def test_open_ended_speech_falls_through_to_cosmos(transcript):

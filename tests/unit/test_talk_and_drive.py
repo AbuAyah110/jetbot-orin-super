@@ -19,6 +19,7 @@ from talk_and_drive import (  # noqa: E402
     UNDERSTAND_FAIL_PHRASE,
     TalkDriveExecutor,
     asr_transcript_usable,
+    calibrate_cosmos_action,
     clamp_test_action,
     unicycle_wheels,
 )
@@ -45,6 +46,26 @@ def test_parse_fail_is_stop():
     assert action.vx == 0.0
     assert action.wz == 0.0
     assert action.raw_ok is False
+
+
+def test_cosmos_tiny_velocity_becomes_calibrated_forward_tick():
+    planned = parse_action(
+        '{"action":"drive","vx":0.03,"wz":0,"duration_s":0.01,'
+        '"goal":"red object","reason":"visible ahead"}'
+    )
+    action = calibrate_cosmos_action(planned)
+    assert action.kind == 'drive'
+    assert action.vx == pytest.approx(0.65)
+    assert action.wz == 0.0
+    assert action.duration_s == pytest.approx(1.2)
+    assert unicycle_wheels(action.vx, action.wz) == pytest.approx((0.65, 0.65))
+
+
+def test_invalid_cosmos_json_calibration_stays_stopped():
+    action = calibrate_cosmos_action(parse_action('not json'))
+    assert action.kind == 'stop'
+    assert action.raw_ok is False
+    assert action.vx == action.wz == action.duration_s == 0.0
 
 
 def test_executor_parse_fail_and_drive_always_stop():
