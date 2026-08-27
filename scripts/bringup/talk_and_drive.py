@@ -74,8 +74,17 @@ TEST_DURATION_MAX_S = 0.5
 READY_PHRASE = "I'm ready for your command"
 UNDERSTAND_FAIL_PHRASE = "I was unable to understand what you said."
 LISTEN_PHRASE = "Listening"
-MIC_SECONDS = 4
+MIC_SECONDS = 8
 ASR_MIN_LETTERS = 2
+# A short finite beep is easier to time against than a spoken cue.
+BEEP_HZ = 880
+BEEP_SECONDS = 0.18
+BEEP_RATE = 16000
+# Peak below this is room noise, not a voice; used for logging and to decide
+# whether an unusable transcript deserves the spoken fail phrase.
+SPEECH_PEAK_FLOOR_FS = 0.04
+# Let the USB playback stream drain so capture never records the cue tail.
+PLAYBACK_SETTLE_S = 0.25
 WZ_WHEEL_SCALE = 0.4
 SPEAK_PLAY_MAX_CHARS = 64
 
@@ -169,6 +178,40 @@ def write_silence_wav(path: Path, seconds: float = 0.25, sample_rate: int = 1600
     nframes = max(0, int(float(seconds) * int(sample_rate)))
     write_wav(path, [0.0] * nframes, sample_rate)
     return path
+
+
+def write_beep_wav(path: Path) -> Path:
+    """One short finite tone. Never a continuous or repeating tone."""
+    nframes = int(BEEP_SECONDS * BEEP_RATE)
+    ramp = max(1, int(0.01 * BEEP_RATE))
+    samples = []
+    for i in range(nframes):
+        gain = 0.6
+        if i < ramp:
+            gain *= i / ramp
+        elif i > nframes - ramp:
+            gain *= max(0, (nframes - i)) / ramp
+        samples.append(gain * math.sin(2.0 * math.pi * BEEP_HZ * i / BEEP_RATE))
+    write_wav(path, samples, BEEP_RATE)
+    return path
+
+
+def wav_energy(samples) -> tuple[float, float]:
+    """Peak and RMS as a fraction of full scale."""
+    if not samples:
+        return 0.0, 0.0
+    peak = 0.0
+    total = 0.0
+    for value in samples:
+        magnitude = abs(float(value))
+        if magnitude > peak:
+            peak = magnitude
+        total += magnitude * magnitude
+    return peak, math.sqrt(total / len(samples))
+
+
+def stamp() -> str:
+    return time.strftime('%H:%M:%S')
 
 
 def speak_understand_fail(tts, playback_dev: str, wav_dir: Path) -> None:
@@ -486,8 +529,34 @@ def main() -> int:
             flush=True,
         )
 
+    beep_wav = write_beep_wav(wav_dir / 'talk_and_drive_beep.wav')
+    last_peak = 0.0
+
+    def cue_then_capture(cap_path: Path) -> None:
+        """Beep, drain playback, then open the mic. Cue must not be recorded."""
+        nonlocal last_peak
+        apply_alsa_safety()
+        play_wav_once(beep_wav, playback)
+        time.sleep(PLAYBACK_SETTLE_S)
+        print(
+            '{0} mic_open {1}s — speak now'.format(stamp(), args.mic_seconds),
+            flush=True,
+        )
+        capture_mic_wav(args.mic_seconds, capture_dev, cap_path)
+        print('{0} mic_closed'.format(stamp()), flush=True)
+
     def transcribe_path(path: Path) -> str:
+        nonlocal last_peak
         samples, rate = read_wav_mono(path)
+        peak, rms = wav_energy(samples)
+        last_peak = peak
+        print(
+            'capture peak={0:.3f}FS rms={1:.4f}FS secs={2:.2f} voice={3}'.format(
+                peak, rms, (len(samples) / rate) if rate else 0.0,
+                peak >= SPEECH_PEAK_FLOOR_FS,
+            ),
+            flush=True,
+        )
         if asr is None:
             return ''
         if not samples:
@@ -509,14 +578,10 @@ def main() -> int:
             if asr is None:
                 print('asr_unavailable', flush=True)
                 return None
-            apply_alsa_safety()
-            if args.listen_prompt and tts is not None and not first_capture:
-                speak_short(tts, LISTEN_PHRASE, playback, wav_dir)
             first_capture = False
             cap_path = wav_dir / 'talk_and_drive_mic.wav'
-            print('listening {0}s — speak now'.format(args.mic_seconds), flush=True)
             try:
-                capture_mic_wav(args.mic_seconds, capture_dev, cap_path)
+                cue_then_capture(cap_path)
             except Exception as exc:
                 print('capture_failed', exc, file=sys.stderr, flush=True)
                 return ''
@@ -534,10 +599,8 @@ def main() -> int:
         if asr is None:
             print('asr_unavailable: type a command or omit --skip-asr', flush=True)
             return ''
-        apply_alsa_safety()
         cap_path = wav_dir / 'talk_and_drive_mic.wav'
-        print('listening {0}s — speak now'.format(args.mic_seconds), flush=True)
-        capture_mic_wav(args.mic_seconds, capture_dev, cap_path)
+        cue_then_capture(cap_path)
         speech = transcribe_path(cap_path)
         print('asr', json.dumps({'text': speech}), flush=True)
         return speech
@@ -557,11 +620,17 @@ def main() -> int:
             if not asr_transcript_usable(speech):
                 executor.hard_stop()
                 consecutive_misses += 1
-                # Say it once per run of misses; an empty room must not be nagged.
-                if consecutive_misses <= 1:
+                # Answer a voice we could not parse; never nag a silent room.
+                heard_voice = last_peak >= SPEECH_PEAK_FLOOR_FS
+                if heard_voice and consecutive_misses <= 2:
                     speak_understand_fail(tts, playback, wav_dir)
                 else:
-                    print('asr_miss_silent', consecutive_misses, flush=True)
+                    print(
+                        'asr_miss_quiet run={0} peak={1:.3f}FS'.format(
+                            consecutive_misses, last_peak
+                        ),
+                        flush=True,
+                    )
                 if args.once is not None or args.max_turns == 1:
                     break
                 continue
