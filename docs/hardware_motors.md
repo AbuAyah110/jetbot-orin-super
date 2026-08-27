@@ -10,8 +10,9 @@ Path: `jetbot/robot.py`, `jetbot/motor.py`
 | --- | --- |
 | Interface | Adafruit Motor HAT / PCA9685 via `Adafruit_MotorHAT` |
 | Alt board | SparkFun Serial Controlled Motor Driver (`qwiic`, addr `93`) |
-| Orin default I2C bus | **1** |
+| Orin default I2C bus | **7** on this JetPack 6.2 board (40-pin SDA/SCL pins 3/5); onboard chips are on bus **1** |
 | Orin preferred motor addr | **112 (`0x70`)**; fallback **96 (`0x60`)** |
+| Wheel sign | `right_motor_alpha = -1.0` so both wheels drive forward together |
 | API shape | `Robot.forward/backward/left/right/stop`, per-wheel `Motor.value` in `[-1, 1]` |
 | Discovery | `qwiic.scan()` at init |
 
@@ -32,8 +33,9 @@ New code must **not** call PWM from MCP or LLMs.
 
 ```bash
 ./scripts/diagnostics.sh
+sudo i2cdetect -y -r 7
 sudo i2cdetect -y -r 1
-# expect 0x70 and/or 0x60 for motor HAT; often 0x3c for OLED
+# HAT/OLED on bus 7: expect 0x70 and/or 0x60, often 0x3c for OLED
 ```
 
 Raise wheels, set `backend: jetbot_i2c`, run teleop at very low speed, confirm stop + watchdog.
