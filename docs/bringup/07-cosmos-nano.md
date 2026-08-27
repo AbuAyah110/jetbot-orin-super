@@ -6,7 +6,7 @@ Ticket: [#17](https://github.com/AbuAyah110/jetbot-orin-super/issues/17) is now 
 
 This is the **locked robot VLM**: Cosmos-Reason2-2B via **TensorRT Edge-LLM v0.10.0**, in-process, INT4 LLM + FP16 ViT, **maxBatchSize 1**, **maxInputLen 3072**, **maxKVCacheCapacity 4096**. Do **not** quantize on this board. Do **not** install PyTorch. Do **not** start a Qwen rebuild. Do **not** load Hub **FP8 / NVFP4** Cosmos checkpoints (SM87 cannot run them).
 
-**Engines are built and loaded as of 2026-08-27 13:24 CDT.** Motors were **not** driven and the camera loop was **not** started; the only runtime exercise was text-only `llm_inference` with the visual engine mapped.
+**Engines are built and loaded as of 2026-08-27 13:24 CDT.** A later VLM pass (14:31 CDT) ran one 448² CSI JPEG through `llm_inference` in drive mode. Motors were **not** driven and no live camera loop was left running.
 
 ## Thin-stack path is the operator entry point
 
@@ -128,7 +128,30 @@ Never think while `vx != 0`.
 Logs (ignored, on-device): `data/edgellm/cosmos/logs/JETSON_BUILD.log`,
 `JETSON_BUILD_verify.log`, `llm_inference_load.log`,
 `llm_inference_drive.log`, `tegrastats-build.txt`,
-`tegrastats-cosmos-load.txt`.
+`tegrastats-cosmos-load.txt`, `vlm_drive_*.json`, `vlm_drive_inference.log`,
+`tegrastats-vlm-drive.txt`.
+
+## VLM CSI JPEG smoke — pass (2026-08-27 14:31 CDT)
+
+Resident PID 399034 (`llm_inference` writing `/tmp/cosmos_reason2_resident.fifo`) could not take another prompt. The FIFO was **not** drained; that process was killed and a fresh `llm_inference` loaded the same engines. One CSI frame was captured with a single pipeline (`nvarguscamerasrc` `num-buffers=1`, 1280×720 NVMM → `nvvidconv` 448² → `nvjpegenc`), not a second 1080p stream. Drive mode: **no think suffix**, `temperature` 0, `max_generate_length` 96, `batch_size` 1, `warmup` 0.
+
+| Item | Result |
+| --- | --- |
+| Verdict | **Pass** — model returned text with `action":"stop"`; motors not opened |
+| Image | `data/edgellm/cosmos/logs/csi448_vlm_test.jpg` (448×448, 17.8 KiB) |
+| Prompt (user) | Drive-mode JSON-only turn: look at the current 448² frame and choose a safe action (`stop\|drive\|speak\|wait\|weather`). System message is the JetBot JSON schema. |
+| Output | `{"action":"stop","vx":0.01,"wz":0.01,"duration_s":0.13,"say":"\\","goal":"avoid red object","reason":"The red object is in the path, causing a potential collision."}` |
+| JSON | **Invalid** (`say` truncated / unescaped quote). Schema kind is still recognizable as `stop`. |
+| finish_reason | `end-of-sequence`; 1/1 successful |
+| Vision | 1 image, **196** image tokens, encoder **180 ms** |
+| Prefill | 426 tokens, **174 ms**, 2449 tok/s |
+| Generation | **54** tokens, **45.6 tok/s**, 21.9 ms/token |
+| TTFT (approx.) | **~354 ms** (vision 180 + prefill 174). Runtime did not emit a named TTFT field. E2E request ~1.54 s. |
+| tegrastats RAM | baseline after kill **2590 / 7620 MB**; peak **5613 / 7620 MB** (5.48 GiB board total); **delta 3023 MB = 2.95 GiB** |
+| Swap | 1503 / 32768 MB (unchanged) |
+| Edge-LLM peak UMA | 1101 MB (profiler) |
+
+Board total crossed 5 GiB because Cursor remote is still connected (~2.4 GiB used before this load). The VLM-only delta stayed **~2.95 GiB**, under the 5.0 GiB abort. Did not halt.
 
 ## Qwen2.5-VL removed (2026-08-27)
 
@@ -388,9 +411,10 @@ Build LLM then ViT **sequentially**, nothing else large resident (stop voice/age
 | `visual_build` (64 / 280 / 280, FP16 ViT) | **Pass** — `visual.engine` 785 MiB |
 | Cosmos engine loaded / tegrastats | **Pass** — peak 5441/7620 MB, **delta 2.88 GiB**, under the 5.0 GiB abort |
 | Text inference sanity | **Pass** — 3/3 drive-mode requests, temperature 0, 96 tokens |
-| Motors / camera loop | **Not started** |
+| VLM + 448² CSI JPEG | **Pass** — 1 image, 196 vis tokens, text `action=stop`; JSON `say` invalid |
+| Motors / camera loop | **Not started** (one-shot CSI JPEG only; no PWM) |
 | BGE | 127 MiB local CPU ONNX candidate in ignored data; not loaded |
 
 Remaining for Stage G: wire the Edge-LLM loader into
-`jetbot_agent/robot_loop/` in-process (no HTTP sidecar), then a parked episode
-with the 448² CSI JPEG.
+`jetbot_agent/robot_loop/` in-process (no HTTP sidecar). One-shot 448² CSI JPEG
+inference already passed; a parked loop with duration-stop motors is still open.
