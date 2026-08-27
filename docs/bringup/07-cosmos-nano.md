@@ -6,7 +6,7 @@ Ticket: [#17](https://github.com/AbuAyah110/jetbot-orin-super/issues/17) is now 
 
 This is the **locked robot VLM**: Cosmos-Reason2-2B via **TensorRT Edge-LLM v0.10.0**, in-process, INT4 LLM + FP16 ViT, **maxBatchSize 1**, **maxInputLen 3072**, **maxKVCacheCapacity 4096**. Do **not** quantize on this board. Do **not** install PyTorch. Do **not** start a Qwen rebuild. Do **not** load Hub **FP8 / NVFP4** Cosmos checkpoints (SM87 cannot run them).
 
-**Engines are built and loaded as of 2026-08-27 13:24 CDT.** A later VLM pass (14:31 CDT) ran one 448² CSI JPEG through `llm_inference` in drive mode. Motors were **not** driven and no live camera loop was left running.
+**Engines are built and loaded as of 2026-08-27 13:24 CDT.** A later VLM pass (14:31 CDT) ran one 448² CSI JPEG through `llm_inference` in drive mode. A look-then-log loop (15:36 CDT) ran four 448² ticks with engines kept mapped; motors were **not** driven and TTS was **not** played.
 
 ## Thin-stack path is the operator entry point
 
@@ -176,6 +176,19 @@ Cosmos was loaded from `~/jetbot-thin-stack/cosmos-engines/` with `warmup=0`, `m
 | OOM | **None** (`dmesg` empty; neither process killed) |
 
 Fits: **yes**. Voice is under the ~192 MiB Stage F peak; Cosmos is ~2.89 GiB vs the ~3 GiB prior load. Together they add **~3.0 GiB** on UMA. Board total **5.58 GiB** still includes Cursor remote (~1.1 GiB RSS); that is not a VLM abort. Combined engines stay well under the **5.0 GiB** Cosmos halt line. No HTTP LLM server, PyTorch, Jina GPU, or BGE GPU.
+
+## Look-then-log loop — pass (2026-08-27 15:36 CDT)
+
+PID 406078's one-shot FIFO was **not** drained. That process was already gone; `/tmp/cosmos_reason2_resident.fifo` was unlinked without `cat`. A new `scripts/bringup/cosmos_resident` process (PID **412353**) loaded `~/jetbot-thin-stack/cosmos-engines/` once and served four generate calls over a control directory (`/tmp/jetbot_cosmos_loop`), not HTTP and not a FIFO. Drive mode: **no think**, `temperature` 0, `max_generate_length` **80**. One CSI pipeline (`nvarguscamerasrc` live, 1280×720 NVMM → `nvvidconv` 448² → `nvjpegenc`). JSON gate `jetbot_agent/robot_loop/actions.py`. Executor was log-only: **no PWM**, **no `jetbot.Robot`**, **no TTS playback**. Stop was held for each infer (~1.6 s). Loop then stopped; Cosmos stayed mapped.
+
+| Tick | Time (CDT) | Gated action | vx / wz after clamp | Parse failed | Infer | tegrastats RAM |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 15:36:12 | `drive` (extra `direction` key ignored) | **0.0 / 0.0** | no | 1.596 s | **5951 / 7620 MB** |
+| 2 | 15:36:14 | `drive` | **0.0 / 0.0** | no | 1.762 s | **5960 / 7620 MB** |
+| 3 | 15:36:16 | `drive` | **0.0 / 0.0** | no | 1.661 s | **5964 / 7620 MB** |
+| 4 | 15:36:17 | `drive` | **0.0 / 0.0** | no | 1.661 s | **5965 / 7620 MB** |
+
+Tick 1 model text was valid JSON with `action=drive` and no velocities (gate zeros vx/wz). Tick 2 wrapped the object in quotes; the inner object still parsed. Ticks 3–4 used a markdown fence. CSI JPEGs were 448×448. Swap **~1448–1450 / 32768 MB**. Board total includes Cursor remote; Cosmos was not reloaded between ticks. Device logs (ignored): `data/edgellm/cosmos/logs/look_then_log.jsonl`.
 
 ## Qwen2.5-VL removed (2026-08-27)
 
@@ -437,9 +450,9 @@ Build LLM then ViT **sequentially**, nothing else large resident (stop voice/age
 | Text inference sanity | **Pass** — 3/3 drive-mode requests, temperature 0, 96 tokens |
 | VLM + 448² CSI JPEG | **Pass** — 1 image, 196 vis tokens, text `action=stop`; JSON `say` invalid |
 | Voice co-residency (Zipformer+Piper CPU) | **Pass** — peak **5712/7620 MB**; voice **161.5 MiB** RSS; Cosmos delta **2.89 GiB**; no OOM |
-| Motors / camera loop | **Not started** (one-shot CSI JPEG only; no PWM) |
+| Motors / camera loop | **Look-then-log pass** (2026-08-27 15:36 CDT) — 4 ticks, no PWM, no TTS |
 | BGE | 127 MiB local CPU ONNX candidate in ignored data; not loaded |
 
-Remaining for Stage G: wire the Edge-LLM loader into
-`jetbot_agent/robot_loop/` in-process (no HTTP sidecar). One-shot 448² CSI JPEG
-inference already passed; a parked loop with duration-stop motors is still open.
+Remaining for Stage G: keep the Edge-LLM loader in `jetbot_agent/robot_loop/`
+without an HTTP sidecar. A parked look-then-log loop (JSON gate, duration-stop
+contract, no motors) passed on 2026-08-27; wiring `jetbot.Robot` is still open.

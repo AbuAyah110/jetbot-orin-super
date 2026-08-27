@@ -69,6 +69,10 @@ def build_user_prompt(*, request: LoopInput, history: str, moving: bool) -> str:
     return base + '\n' + prompt_suffix(moving=moving)
 
 
+DRIVE_MAX_TOKENS_MIN = 64
+DRIVE_MAX_TOKENS_MAX = 96
+
+
 class OneProcessOrchestrator:
     """Connect one JPEG and one runtime to a fail-closed action executor."""
 
@@ -79,25 +83,39 @@ class OneProcessOrchestrator:
         *,
         history: Optional[ChatHistory] = None,
         weather: Optional[Callable[[str], str]] = None,
+        drive_mode: bool = False,
+        drive_max_tokens: int = 80,
+        think_max_tokens: int = 384,
     ) -> None:
         self.runtime = runtime
         self.executor = executor
         self.history = history or ChatHistory(max_turns=6)
         self.weather = weather
+        self.drive_mode = bool(drive_mode)
+        tokens = int(drive_max_tokens)
+        if tokens < DRIVE_MAX_TOKENS_MIN:
+            tokens = DRIVE_MAX_TOKENS_MIN
+        if tokens > DRIVE_MAX_TOKENS_MAX:
+            tokens = DRIVE_MAX_TOKENS_MAX
+        self.drive_max_tokens = tokens
+        self.think_max_tokens = int(think_max_tokens)
 
     def tick(self, request: LoopInput) -> RobotAction:
-        moving = bool(self.executor.is_moving())
+        # Hold stop for the whole generate (~1.5 s). Wheels never start here.
+        self.executor.execute(RobotAction(kind='stop', vx=0.0, wz=0.0, duration_s=0.0))
+        use_drive = self.drive_mode or bool(self.executor.is_moving())
         prompt = build_user_prompt(
             request=request,
             history=self.history.render(),
-            moving=moving,
+            moving=use_drive,
         )
+        max_tokens = self.drive_max_tokens if use_drive else self.think_max_tokens
         try:
             output = self.runtime.generate(
                 system=SYSTEM_PROMPT,
                 user_text=prompt,
                 image_jpeg=request.image_jpeg,
-                max_tokens=80 if moving else 384,
+                max_tokens=max_tokens,
             )
             action = parse_action(output)
         except Exception:

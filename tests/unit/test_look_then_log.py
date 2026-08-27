@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from jetbot_agent.robot_loop.actions import parse_action
+from jetbot_agent.robot_loop.csi_jpeg import CsiJpeg448
+from jetbot_agent.robot_loop.log_executor import LogOnlyExecutor
+from jetbot_agent.robot_loop.orchestrator import LoopInput, OneProcessOrchestrator
+from jetbot_agent.robot_loop.prompts import DRIVE_PROMPT_SUFFIX
+
+
+class FakeRuntime:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.calls = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.text
+
+
+class RecordingExecutor(LogOnlyExecutor):
+    pass
+
+
+def test_pipeline_is_one_csi_448():
+    pipe = CsiJpeg448().gst_pipeline()
+    assert pipe.count('nvarguscamerasrc') == 1
+    assert 'num-buffers=0' not in pipe
+    assert 'width=(int)448' in pipe
+    assert 'height=(int)448' in pipe
+    assert 'nvjpegenc' in pipe
+    oneshot = CsiJpeg448(num_buffers=1).gst_pipeline()
+    assert 'num-buffers=1' in oneshot
+    assert oneshot.count('nvarguscamerasrc') == 1
+
+
+def test_log_executor_never_moves():
+    exe = LogOnlyExecutor()
+    exe.execute(parse_action('{"action":"drive","vx":0.2,"wz":0.5}'))
+    assert exe.is_moving() is False
+    assert exe.last.kind == 'drive'
+    assert exe.last.vx == 0.2
+
+
+def test_drive_mode_no_think_and_token_clamp():
+    runtime = FakeRuntime('{"action":"stop"}')
+    orch = OneProcessOrchestrator(
+        runtime, LogOnlyExecutor(), drive_mode=True, drive_max_tokens=80
+    )
+    orch.tick(LoopInput(image_jpeg=b'\xff\xd8'))
+    assert runtime.calls
+    assert runtime.calls[0]['max_tokens'] == 80
+    assert DRIVE_PROMPT_SUFFIX in runtime.calls[0]['user_text']
+    assert 'extended thinking' in runtime.calls[0]['user_text'].lower() or 'Do not use extended thinking' in runtime.calls[0]['user_text']
+
+
+def test_invalid_json_logs_stop_and_hold_stop_before_infer():
+    runtime = FakeRuntime('not json')
+    exe = LogOnlyExecutor()
+    orch = OneProcessOrchestrator(runtime, exe, drive_mode=True)
+    action = orch.tick(LoopInput())
+    assert action.kind == 'stop'
+    assert action.raw_ok is False
+    assert action.vx == 0.0
+    assert action.wz == 0.0
+    assert exe.history[0].kind == 'stop'
+    assert exe.history[-1].kind == 'stop'
+
+
+def test_clamped_drive_is_logged_not_spoken():
+    payload = json.dumps(
+        {'action': 'drive', 'vx': 9, 'wz': -4, 'duration_s': 1, 'say': 'nope'}
+    )
+    runtime = FakeRuntime(payload)
+    exe = LogOnlyExecutor()
+    orch = OneProcessOrchestrator(runtime, exe, drive_mode=True)
+    action = orch.tick(LoopInput())
+    assert action.kind == 'drive'
+    assert action.vx == 0.22
+    assert action.wz == -1.0
+    assert action.say == ''
+    assert exe.is_moving() is False

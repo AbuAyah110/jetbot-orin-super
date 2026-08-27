@@ -82,3 +82,5 @@ CMakeFiles/
 cmake_install.cmake
 **/CMakeFiles/
 **/cmake_install.cmake
+scripts/bringup/cosmos_resident
+scripts/bringup/cosmos_resident.o

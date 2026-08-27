@@ -11,6 +11,7 @@ from jetbot_agent.robot_loop.actions import (
 )
 from jetbot_agent.robot_loop.csi_jpeg import CSI_JPEG_SIZE, CsiJpeg448
 from jetbot_agent.robot_loop.history import ChatHistory
+from jetbot_agent.robot_loop.log_executor import LogOnlyExecutor
 from jetbot_agent.robot_loop.orchestrator import LoopInput, OneProcessOrchestrator
 from jetbot_agent.robot_loop.prompts import (
     DRIVE_PROMPT_SUFFIX,
@@ -23,6 +24,7 @@ __all__ = [
     'ChatHistory',
     'CsiJpeg448',
     'DRIVE_PROMPT_SUFFIX',
+    'LogOnlyExecutor',
     'MAX_DURATION_S',
     'LoopInput',
     'OneProcessOrchestrator',

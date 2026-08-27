@@ -50,8 +50,8 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | G-Cosmos rsync | ONNX present on device; INT4 FFN + FP16 vision, Edge-LLM 0.10.0 | `rsync -avP --checksum ...` for revalidation |
 | G-Cosmos Jetson build | **Pass** — SM87 `llm.engine` 777 MiB + `visual.engine` 785 MiB | `bash ~/jetbot-thin-stack/jetbot_vlm_agent/scripts/JETSON_BUILD.sh` |
 | G-Cosmos load / RAM | **Pass** — peak 5441/7620 MB, Cosmos delta **2.88 GiB**, under the 5.0 GiB abort | `tegrastats-cosmos-load.txt` |
-| One-process scaffold | Parser/camera/prompts/stubs implemented; engines exist, loader not yet wired | `pytest tests/unit/test_robot_loop_actions.py` |
-| Robot integration | Pending in-process loader + parked episode | Scripted parked episode; no direct PWM |
+| One-process scaffold | Parser/camera/prompts + look-then-log resident loader | `pytest tests/unit/test_look_then_log.py` |
+| Robot integration | **Look-then-log pass** (4 ticks, no PWM/TTS); `jetbot.Robot` still unwired | `scripts/bringup/look_then_log.py` |
 | Memory | Stub only; local 127 MiB BGE ONNX candidate found, not loaded | CPU BGE vector round-trip in LanceDB |
 
 Cosmos residency measured 2026-08-27: baseline **2487 / 7620 MB**, peak with the
@@ -121,12 +121,12 @@ temperature 0, parked think 256–512, never think while `vx != 0`.
 - [x] Strict JSON parser for `stop|drive|speak|wait|weather`; invalid → stop.
 - [x] Velocity/duration clamps and explicit duration-then-stop contract.
 - [x] Drive and parked-think prompt suffix helpers.
-- [x] `CosmosRuntime` raises `StageNotReady`; no engine mapping.
+- [x] `CosmosRuntime` refuses in-process TRT map; look-then-log uses `cosmos_resident`.
 - [x] Import-safe BGE/LanceDB stubs; no model fetch.
-- [ ] Wire the Edge-LLM loader after engines pass isolated inference.
+- [x] Wire a resident Edge-LLM generate loop (file protocol, no HTTP) after isolated inference.
 - [ ] Wire Zipformer/Piper CPU without adding another process.
 - [ ] Wire only the bounded action executor to `jetbot.Robot`.
-- [ ] Run first episode with wheels raised, then repeat parked.
+- [x] Run look-then-log (4 ticks, stop held, no motors); first driving episode still open.
 
 ### 5. CPU memory
 

@@ -17,9 +17,10 @@ _CAPTURE_HEIGHT = 720
 class CsiJpeg448:
     """In-process GStreamer: Argus → nvvidconv 448² → nvjpegenc → appsink."""
 
-    def __init__(self, sensor_id: int = 0, fps: int = 15) -> None:
+    def __init__(self, sensor_id: int = 0, fps: int = 15, num_buffers: Optional[int] = None) -> None:
         self.sensor_id = int(sensor_id)
         self.fps = int(fps)
+        self.num_buffers = num_buffers
         self.width = CSI_JPEG_SIZE
         self.height = CSI_JPEG_SIZE
         self._pipeline = None
@@ -27,8 +28,12 @@ class CsiJpeg448:
 
     def gst_pipeline(self) -> str:
         """Single pipeline string. One nvarguscamerasrc, one nvjpegenc."""
+        src = 'nvarguscamerasrc sensor-id={sensor}'.format(sensor=self.sensor_id)
+        # num-buffers=0 means "capture zero frames" on nvarguscamerasrc (Argus exits immediately).
+        if self.num_buffers is not None and int(self.num_buffers) > 0:
+            src += ' num-buffers={0}'.format(int(self.num_buffers))
         return (
-            'nvarguscamerasrc sensor-id={sensor} num-buffers=0 ! '
+            '{src} ! '
             'video/x-raw(memory:NVMM), width=(int){cw}, height=(int){ch}, '
             'format=(string)NV12, framerate=(fraction){fps}/1 ! '
             'nvvidconv ! '
@@ -36,7 +41,7 @@ class CsiJpeg448:
             'nvjpegenc ! image/jpeg, width=(int){w}, height=(int){h} ! '
             'appsink name=sink emit-signals=false max-buffers=1 drop=true sync=false'
         ).format(
-            sensor=self.sensor_id,
+            src=src,
             cw=_CAPTURE_WIDTH,
             ch=_CAPTURE_HEIGHT,
             fps=self.fps,
