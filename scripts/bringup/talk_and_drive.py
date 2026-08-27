@@ -6,8 +6,9 @@ map to one fixed nudge each, spoken back before the wheels move. Cosmos still
 answers open-ended speech. See jetbot_agent/robot_loop/intents.py.
 
 Safety for this first live test:
-  vx abs <= LIVE_VX_MAX (0.35), wz abs <= 1.0, duration_s <= 0.5, then Robot.stop().
-  Motion-word nudges are 0.30 for 0.35 s (0.15 hummed, did not roll).
+  Live motion uses the *measured* duty in config/robot.yaml (0.65 / 1.2 s).
+  Caps: |wheel| <= LIVE_VX_MAX (0.7), duration_s <= LIVE_DURATION_MAX_S (2 s),
+  then Robot.stop(). Forward/back/left/right all share that |duty|.
   Invalid JSON / parse fail / exception → Robot.stop().
   Empty / garbage ASR never calls Cosmos (motors stay stopped).
   ALSA: SSS1629 Mic playback/sidetone OFF, Speaker 75%.
@@ -53,13 +54,14 @@ from jetbot_agent.hardware.audio_interface import (  # noqa: E402
     resolve_sss1629,
 )
 from jetbot_agent.robot_loop.actions import (  # noqa: E402
-    WZ_MAX,
     RobotAction,
     parse_action,
 )
 from jetbot_agent.robot_loop.csi_jpeg import CsiJpeg448  # noqa: E402
 from jetbot_agent.robot_loop.intents import (  # noqa: E402
+    LIVE_DURATION_MAX_S,
     LIVE_VX_MAX,
+    LIVE_WZ_MAX,
     NUDGE_DURATION_S,
     NUDGE_VX,
     ack_phrase,
@@ -82,7 +84,7 @@ from jetbot_agent.robot_loop.orchestrator import (  # noqa: E402
 )
 
 DRIVE_MAX_TOKENS = 80
-TEST_DURATION_MAX_S = 0.5
+TEST_DURATION_MAX_S = LIVE_DURATION_MAX_S
 READY_PHRASE = "I'm ready for your command"
 UNDERSTAND_FAIL_PHRASE = "I was unable to understand what you said."
 # Cosmos handles open-ended speech; the user still gets a word back, never silence.
@@ -105,7 +107,7 @@ SPEAK_PLAY_MAX_CHARS = 64
 
 
 def clamp_test_action(action: RobotAction) -> RobotAction:
-    """Re-clamp after the JSON gate for this first test (duration <= 0.5 s)."""
+    """Re-clamp after the JSON gate (duration <= 2 s, |vx| <= 0.7)."""
     if action is None:
         return RobotAction(kind='stop', raw_ok=False, reason='parse_fail')
     vx = action.vx
@@ -114,15 +116,15 @@ def clamp_test_action(action: RobotAction) -> RobotAction:
         vx = LIVE_VX_MAX
     if vx < -LIVE_VX_MAX:
         vx = -LIVE_VX_MAX
-    if wz > WZ_MAX:
-        wz = WZ_MAX
-    if wz < -WZ_MAX:
-        wz = -WZ_MAX
+    if wz > LIVE_WZ_MAX:
+        wz = LIVE_WZ_MAX
+    if wz < -LIVE_WZ_MAX:
+        wz = -LIVE_WZ_MAX
     duration = action.duration_s
     if duration < 0.0 or not math.isfinite(duration):
         duration = 0.0
-    if duration > TEST_DURATION_MAX_S:
-        duration = TEST_DURATION_MAX_S
+    if duration > LIVE_DURATION_MAX_S:
+        duration = LIVE_DURATION_MAX_S
     if action.kind != 'drive':
         vx = 0.0
         wz = 0.0
@@ -338,7 +340,7 @@ class TalkDriveExecutor:
                     speak_short(self.tts, action.say, self.playback_dev, self.wav_dir)
                     self.last_spoke = True
                 return
-            duration = min(float(action.duration_s), TEST_DURATION_MAX_S)
+            duration = min(float(action.duration_s), LIVE_DURATION_MAX_S)
             left, right = unicycle_wheels(action.vx, action.wz)
             print(
                 'moving vx={0:.3f} wz={1:.3f} duration_s={2:.3f} left={3:.3f} right={4:.3f}'.format(
@@ -541,7 +543,7 @@ def main() -> int:
 
     print(
         'talk_and_drive ready clamps vx<={0} wz<={1} duration_s<={2} nudge_vx={3} nudge_s={4}'.format(
-            LIVE_VX_MAX, WZ_MAX, TEST_DURATION_MAX_S, NUDGE_VX, NUDGE_DURATION_S
+            LIVE_VX_MAX, LIVE_WZ_MAX, LIVE_DURATION_MAX_S, NUDGE_VX, NUDGE_DURATION_S
         ),
         flush=True,
     )

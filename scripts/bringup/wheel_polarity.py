@@ -35,8 +35,13 @@ for _extra_site in (
     if _extra_site.is_dir() and str(_extra_site) not in sys.path:
         sys.path.append(str(_extra_site))
 
-SPEED_MAX = 0.22
+# 0.22 was chosen before the stiction threshold was measured: at that duty the
+# motors only hum. The cap matches drive_calibration.SPEED_HARD_MAX so the
+# diagnostic can reach the duty that actually rolls, and no further.
+SPEED_MAX = 0.7
 SECONDS_MAX = 5.0
+# A stalled motor overheats and drains the pack, so ramp pulses stay short.
+RAMP_SECONDS_MAX = 2.0
 
 
 def wheel_pair(wheel: str, speed: float) -> tuple[float, float]:

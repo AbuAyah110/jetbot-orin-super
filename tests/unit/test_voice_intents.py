@@ -11,17 +11,19 @@ sys.path.insert(0, str(ROOT / 'scripts' / 'bringup'))
 
 from jetbot_agent.robot_loop.intents import (  # noqa: E402
     ACK_PHRASES,
+    LIVE_DURATION_MAX_S,
     LIVE_VX_MAX,
+    LIVE_WZ_MAX,
     NUDGE_DURATION_S,
     NUDGE_VX,
     ack_phrase,
     intent_action,
+    intent_wheels,
     match_intent,
 )
 
 from talk_and_drive import (  # noqa: E402
     SPEAK_PLAY_MAX_CHARS,
-    TEST_DURATION_MAX_S,
     clamp_test_action,
     unicycle_wheels,
 )
@@ -96,6 +98,24 @@ def test_turns_are_wz_only_and_not_swapped():
     assert right_wheels[1] < 0.0 < right_wheels[0]
 
 
+def test_every_motion_intent_uses_the_same_measured_duty():
+    """Forward, back, left, and right all spin wheels at |NUDGE_VX| for the same hold."""
+    assert NUDGE_VX == pytest.approx(0.65)
+    assert NUDGE_DURATION_S == pytest.approx(1.2)
+    assert intent_wheels('forward') == (NUDGE_VX, NUDGE_VX)
+    assert intent_wheels('back') == (-NUDGE_VX, -NUDGE_VX)
+    assert intent_wheels('left') == (-NUDGE_VX, NUDGE_VX)
+    assert intent_wheels('right') == (NUDGE_VX, -NUDGE_VX)
+    assert intent_wheels('stop') == (0.0, 0.0)
+    for name in ('forward', 'back', 'left', 'right'):
+        action = intent_action(name)
+        assert action.duration_s == pytest.approx(NUDGE_DURATION_S)
+        wheels = unicycle_wheels(action.vx, action.wz)
+        assert wheels == pytest.approx(intent_wheels(name))
+        assert abs(wheels[0]) == pytest.approx(NUDGE_VX)
+        assert abs(wheels[1]) == pytest.approx(NUDGE_VX)
+
+
 def test_wheel_pairs_match_robot_forward_and_backward():
     assert unicycle_wheels(intent_action('forward').vx, 0.0) == (NUDGE_VX, NUDGE_VX)
     assert unicycle_wheels(intent_action('back').vx, 0.0) == (-NUDGE_VX, -NUDGE_VX)
@@ -108,16 +128,16 @@ def test_stop_intent_is_zero_velocity():
 
 
 def test_nudges_survive_the_live_loop_clamp():
-    assert 0.25 <= NUDGE_VX <= 0.35
     assert NUDGE_VX <= LIVE_VX_MAX
     for intent in ('forward', 'back', 'left', 'right'):
         action = clamp_test_action(intent_action(intent))
         assert action.duration_s == pytest.approx(NUDGE_DURATION_S)
-        assert action.duration_s <= TEST_DURATION_MAX_S
+        assert action.duration_s <= LIVE_DURATION_MAX_S
         assert abs(action.vx) <= LIVE_VX_MAX
-        assert abs(action.wz) <= 1.0
+        assert abs(action.wz) <= LIVE_WZ_MAX
         left, right = unicycle_wheels(action.vx, action.wz)
-        assert abs(left) <= 1.0 and abs(right) <= 1.0
+        assert abs(left) == pytest.approx(NUDGE_VX)
+        assert abs(right) == pytest.approx(NUDGE_VX)
     forward = clamp_test_action(intent_action('forward'))
     assert forward.vx == pytest.approx(NUDGE_VX)
 

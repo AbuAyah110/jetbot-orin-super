@@ -13,12 +13,15 @@ from jetbot_agent.robot_loop.csi_jpeg import CSI_JPEG_SIZE, CsiJpeg448
 from jetbot_agent.robot_loop.history import ChatHistory
 from jetbot_agent.robot_loop.intents import (
     ACK_PHRASES,
+    LIVE_DURATION_MAX_S,
     LIVE_VX_MAX,
+    LIVE_WZ_MAX,
     NUDGE_DURATION_S,
     NUDGE_VX,
     NUDGE_WZ,
     ack_phrase,
     intent_action,
+    intent_wheels,
     match_intent,
 )
 from jetbot_agent.robot_loop.log_executor import LogOnlyExecutor
@@ -36,7 +39,9 @@ __all__ = [
     'CsiJpeg448',
     'DRIVE_PROMPT_SUFFIX',
     'LogOnlyExecutor',
+    'LIVE_DURATION_MAX_S',
     'LIVE_VX_MAX',
+    'LIVE_WZ_MAX',
     'MAX_DURATION_S',
     'LoopInput',
     'NUDGE_DURATION_S',
@@ -50,6 +55,7 @@ __all__ = [
     'WZ_MAX',
     'ack_phrase',
     'intent_action',
+    'intent_wheels',
     'match_intent',
     'parse_action',
     'parse_model_output',

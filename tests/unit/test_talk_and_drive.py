@@ -4,11 +4,14 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'scripts' / 'bringup'))
 
-from jetbot_agent.robot_loop.actions import parse_action  # noqa: E402
+from jetbot_agent.robot_loop.actions import RobotAction, parse_action  # noqa: E402
+from jetbot_agent.robot_loop.intents import LIVE_DURATION_MAX_S, LIVE_VX_MAX, LIVE_WZ_MAX  # noqa: E402
 
 from talk_and_drive import (  # noqa: E402
     SPEAK_PLAY_MAX_CHARS,
@@ -22,15 +25,18 @@ from talk_and_drive import (  # noqa: E402
 
 
 def test_test_clamp_caps_duration_to_half_second():
-    action = parse_action(
+    cosmos = parse_action(
         json.dumps({'action': 'drive', 'vx': 9.0, 'wz': -4.0, 'duration_s': 99})
     )
-    clamped = clamp_test_action(action)
+    assert cosmos.vx == 0.22
+    clamped = clamp_test_action(
+        RobotAction(kind='drive', vx=9.0, wz=-4.0, duration_s=99)
+    )
     assert clamped.kind == 'drive'
-    assert clamped.vx == 0.22
-    assert clamped.wz == -1.0
-    assert clamped.duration_s == TEST_DURATION_MAX_S
-    assert TEST_DURATION_MAX_S == 0.5
+    assert clamped.vx == LIVE_VX_MAX == 0.7
+    assert clamped.wz == pytest.approx(-LIVE_WZ_MAX)
+    assert clamped.duration_s == LIVE_DURATION_MAX_S
+    assert TEST_DURATION_MAX_S == LIVE_DURATION_MAX_S == 2.0
 
 
 def test_parse_fail_is_stop():
