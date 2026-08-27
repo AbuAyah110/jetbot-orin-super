@@ -76,9 +76,9 @@ def test_small_positive_wz_does_not_default_to_left():
 @pytest.mark.parametrize(
     'side, wheels',
     [
-        ('left', (-0.65, 0.65)),
+        ('left', (0.50, 0.70)),
         ('center', (0.65, 0.65)),
-        ('right', (0.65, -0.65)),
+        ('right', (0.70, 0.50)),
     ],
 )
 def test_grounded_visible_side_selects_calibrated_tick(side, wheels):
@@ -112,7 +112,7 @@ def test_grounding_question_uses_pixels_and_requires_visible_side():
     )
     assert raw == '{"visible":true,"side":"right"}'
     action = calibrate_cosmos_action(planned, 'MOVE TOWARDS THE RED OBJECT')
-    assert unicycle_wheels(action.vx, action.wz) == pytest.approx((0.65, -0.65))
+    assert unicycle_wheels(action.vx, action.wz) == pytest.approx((0.70, 0.50))
 
 
 def test_grounding_absent_is_spoken_stop():

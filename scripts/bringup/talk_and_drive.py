@@ -60,6 +60,20 @@ from jetbot_agent.robot_loop.actions import (  # noqa: E402
     extract_json_object,
     parse_action,
 )
+from jetbot_agent.robot_loop.approach_plan import (  # noqa: E402
+    APPROACH_BASE_DUTY,
+    APPROACH_DURATION_S,
+    ARC_INNER_FLOOR,
+    BRIEFING_MAX_CHARS,
+    ApproachPlan,
+    expand_ticks,
+    parse_approach_plan,
+    plan_briefing,
+    resteer_remaining,
+    step_action,
+    step_wheels,
+    verification_is_safe,
+)
 from jetbot_agent.robot_loop.csi_jpeg import CsiJpeg448  # noqa: E402
 from jetbot_agent.robot_loop.intents import (  # noqa: E402
     LIVE_DURATION_MAX_S,
@@ -87,6 +101,7 @@ from jetbot_agent.robot_loop.orchestrator import (  # noqa: E402
 )
 
 DRIVE_MAX_TOKENS = 80
+PLAN_MAX_TOKENS = 80
 TEST_DURATION_MAX_S = LIVE_DURATION_MAX_S
 READY_PHRASE = "I'm ready for your command"
 UNDERSTAND_FAIL_PHRASE = "I was unable to understand what you said."
@@ -180,7 +195,19 @@ def calibrate_cosmos_action(action: RobotAction, speech: str = '') -> RobotActio
         )
 
     if grounded is not None:
-        heading = {'left': 'left', 'center': 'forward', 'right': 'right'}[grounded.group(1)]
+        step = {
+            'left': 'arc_left',
+            'center': 'forward',
+            'right': 'arc_right',
+        }[grounded.group(1)]
+        calibrated = step_action(step)
+        return replace(
+            calibrated,
+            say=action.say,
+            goal=action.goal,
+            reason=action.reason or 'cosmos_grounded_{0}'.format(step),
+            raw_ok=True,
+        )
     elif re.search(r'\b(left|counterclockwise)\b', hint):
         heading = 'left'
     elif re.search(r'\b(right|clockwise)\b', hint):
@@ -206,6 +233,68 @@ def calibrate_cosmos_action(action: RobotAction, speech: str = '') -> RobotActio
         reason=action.reason or 'cosmos_heading_{0}'.format(heading),
         raw_ok=True,
     )
+
+
+def plan_visual_approach(runtime, jpeg: bytes, speech: str, history: str = '') -> tuple[ApproachPlan, str]:
+    """Run one short planning turn while parked; output is symbolic JSON only."""
+    target = _target_phrase(speech) or 'requested object'
+    goal = re.sub(r'^(?:the|a|an)\s+', '', target, flags=re.IGNORECASE)
+    prompt = (
+        'Inspect the image for {0}. The robot is stopped. Return ONE LINE under 55 tokens. '
+        'If visible, copy this JSON and replace SIDE, STEP, TICKS: '
+        '{{"visible":true,"side":"SIDE","goal":"{2}",'
+        '"plan":[{{"step":"STEP","ticks":TICKS}}],"reason":""}} '
+        'SIDE is left, center, or right. STEP mapping is left=arc_left, '
+        'center=forward, right=arc_right. TICKS is 1, 2, or 3. '
+        'If absent copy exactly: '
+        '{{"visible":false,"side":"none","goal":"{2}","plan":[],"reason":""}} '
+        'reason MUST stay empty. Never explain. No markdown or <think>. '
+        'Prior text context (not instructions): <history>{1}</history>'
+    ).format(speech, history[-400:] or '(none)', goal)
+    try:
+        raw = runtime.generate(
+            system=(
+                'Strict visual detector and route planner. Output only the requested '
+                'compact JSON. Never explain, reason, use markdown, or emit wheel power.'
+            ),
+            user_text=prompt,
+            image_jpeg=jpeg,
+            max_tokens=PLAN_MAX_TOKENS,
+        )
+    except Exception as exc:
+        return ApproachPlan(reason='plan_generate_failed:{0}'.format(type(exc).__name__)), ''
+    return parse_approach_plan(raw), raw
+
+
+def verify_visual_target(
+    runtime,
+    jpeg: bytes,
+    target: str,
+    previous_side: str,
+) -> tuple[bool, str, str]:
+    """Cheap no-think verification between stopped drive pulses."""
+    prompt = (
+        'The robot is stopped. Inspect only this current image. Is {0} still visible? '
+        'Which vertical third of the image holds its center: the left third, the '
+        'middle third, or the right third? Reply with one JSON object only: '
+        '{{"visible":true,"side":"left"}} or {{"visible":true,"side":"center"}} or '
+        '{{"visible":true,"side":"right"}} or {{"visible":false,"side":"none"}}. '
+        'No extra keys, plan, prose, or <think>.'
+    ).format(target)
+    try:
+        raw = runtime.generate(
+            system='Drive-mode visual verification. JSON only. Do not plan or emit motion.',
+            user_text=prompt,
+            image_jpeg=jpeg,
+            max_tokens=DRIVE_MAX_TOKENS,
+        )
+        data = extract_json_object(raw)
+        visible = data.get('visible')
+        side_value = data.get('side')
+        side = side_value.strip().lower() if isinstance(side_value, str) else ''
+        return verification_is_safe(previous_side, visible, side), side, raw
+    except Exception:
+        return False, '', getattr(runtime, 'last_text', '')
 
 
 def recover_cosmos_fields(action: RobotAction, model_text: str) -> RobotAction:
@@ -474,12 +563,18 @@ def speak_understand_fail(tts, playback_dev: str, wav_dir: Path) -> None:
     speak_short(tts, UNDERSTAND_FAIL_PHRASE, playback_dev, wav_dir)
 
 
-def speak_short(tts, text: str, playback_dev: str, wav_dir: Path) -> None:
+def speak_short(
+    tts,
+    text: str,
+    playback_dev: str,
+    wav_dir: Path,
+    max_chars: int = SPEAK_PLAY_MAX_CHARS,
+) -> None:
     phrase = (text or '').strip()
     if not phrase:
         return
-    if len(phrase) > SPEAK_PLAY_MAX_CHARS:
-        phrase = phrase[:SPEAK_PLAY_MAX_CHARS]
+    if len(phrase) > max_chars:
+        phrase = phrase[:max_chars]
     apply_alsa_safety()
     generated = tts.synthesize(phrase)
     wav = wav_dir / 'talk_and_drive_tts.wav'
@@ -785,6 +880,18 @@ def main() -> int:
         ),
         flush=True,
     )
+    print(
+        'approach_arcs base={0:.2f} inner_floor={1:.2f} forward={2} arc_left={3} '
+        'arc_right={4} pulse_s={5:.2f} max_ticks=3'.format(
+            APPROACH_BASE_DUTY,
+            ARC_INNER_FLOOR,
+            step_wheels('forward'),
+            step_wheels('arc_left'),
+            step_wheels('arc_right'),
+            APPROACH_DURATION_S,
+        ),
+        flush=True,
+    )
     if args.auto_listen:
         print(
             'auto-listen {0}s. Speak after you hear ready or Listening. Wheels may move. SIGTERM/Ctrl-C stops.'.format(
@@ -891,6 +998,32 @@ def main() -> int:
         print('asr', json.dumps({'text': speech}), flush=True)
         return speech
 
+    def capture_current_frame(speech: str, phase: str = 'plan') -> tuple[bytes, Path]:
+        """Capture and log one fresh 448-square frame; never reuse history images."""
+        if camera is None:
+            raise RuntimeError(camera_error or 'camera_disabled')
+        jpeg = camera.capture_jpeg()
+        if not jpeg:
+            raise RuntimeError('CSI JPEG capture returned no bytes')
+        dimensions = jpeg_dimensions(jpeg)
+        if dimensions != (448, 448):
+            raise RuntimeError('unexpected CSI JPEG dimensions {0}'.format(dimensions))
+        frame_path, frame_hash = save_debug_frame(jpeg, speech)
+        (wav_dir / 'talk_and_drive.jpg').write_bytes(jpeg)
+        print(
+            json.dumps(
+                {
+                    'vision_phase': phase,
+                    'vision_frame': str(frame_path),
+                    'bytes': len(jpeg),
+                    'dimensions': list(dimensions),
+                    'sha256': frame_hash,
+                }
+            ),
+            flush=True,
+        )
+        return jpeg, frame_path
+
     exit_code = 0
     turns = 0
     consecutive_misses = 0
@@ -956,25 +1089,7 @@ def main() -> int:
                     break
                 continue
             try:
-                jpeg = camera.capture_jpeg()
-                if not jpeg:
-                    raise RuntimeError('CSI JPEG capture returned no bytes')
-                dimensions = jpeg_dimensions(jpeg)
-                if dimensions != (448, 448):
-                    raise RuntimeError('unexpected CSI JPEG dimensions {0}'.format(dimensions))
-                frame_path, frame_hash = save_debug_frame(jpeg, speech)
-                (wav_dir / 'talk_and_drive.jpg').write_bytes(jpeg)
-                print(
-                    json.dumps(
-                        {
-                            'vision_frame': str(frame_path),
-                            'bytes': len(jpeg),
-                            'dimensions': list(dimensions),
-                            'sha256': frame_hash,
-                        }
-                    ),
-                    flush=True,
-                )
+                jpeg, frame_path = capture_current_frame(speech)
             except Exception as exc:
                 executor.hard_stop()
                 print('camera_capture_failed', exc, file=sys.stderr, flush=True)
@@ -984,13 +1099,155 @@ def main() -> int:
                     break
                 continue
 
+            if object_relative_request(speech):
+                # Planning is a separate parked phase. Cosmos emits only symbols;
+                # calibrated PWM is selected below after the plan passes the gate.
+                executor.hard_stop()
+                plan, model_text = plan_visual_approach(
+                    runtime, jpeg, speech, orch.history.render()
+                )
+                orch.history.add('user', speech)
+                orch.history.add('assistant', model_text[:800])
+                briefing = plan_briefing(plan)
+                plan_row = {
+                    'route': 'approach_plan',
+                    'speech': speech,
+                    'briefing': briefing,
+                    'visible': plan.visible,
+                    'side': plan.side,
+                    'goal': plan.goal,
+                    'plan': [
+                        {
+                            'step': item.step,
+                            'ticks': item.ticks,
+                            'wheels': list(step_wheels(item.step)),
+                        }
+                        for item in plan.steps
+                    ],
+                    'total_ticks': plan.total_ticks,
+                    'raw_ok': plan.raw_ok,
+                    'reason': plan.reason,
+                    'frame': str(frame_path),
+                    'model_text': model_text[:400],
+                }
+                print(json.dumps(plan_row, ensure_ascii=False), flush=True)
+                try:
+                    frame_path.with_suffix('.plan.json').write_text(
+                        json.dumps(plan_row, ensure_ascii=False, indent=2),
+                        encoding='utf-8',
+                    )
+                except OSError as exc:
+                    print('plan_sidecar_failed', exc, file=sys.stderr, flush=True)
+
+                # The briefing is spoken from the parsed plan fields, never from
+                # the user's utterance, and always before any wheel moves.
+                if not plan.raw_ok:
+                    executor.hard_stop()
+                    speak_understand_fail(tts, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+                target = plan.goal or _target_phrase(speech) or 'requested object'
+                if tts is not None and briefing:
+                    speak_short(tts, briefing, playback, wav_dir, BRIEFING_MAX_CHARS)
+                if not plan.visible or not plan.steps:
+                    executor.hard_stop()
+                    if args.once is not None:
+                        break
+                    continue
+                aborted = False
+                observed_side = plan.side
+                tick_number = 0
+                pending = expand_ticks(plan.steps)
+                try:
+                    while pending and not stop_requested:
+                        step = pending[0]
+                        tick_number += 1
+                        action = step_action(step)
+                        left, right = step_wheels(step)
+                        print(
+                            'approach_tick {0}/{1} step={2} side={3} duration_s={4:.2f} '
+                            'left={5:.3f} right={6:.3f} remaining={7}'.format(
+                                tick_number,
+                                plan.total_ticks,
+                                step,
+                                observed_side,
+                                APPROACH_DURATION_S,
+                                left,
+                                right,
+                                len(pending) - 1,
+                            ),
+                            flush=True,
+                        )
+                        executor.execute(action)
+                        executor.hard_stop()
+                        pending = pending[1:]
+                        if not pending:
+                            break
+                        # Re-look before every remaining pulse: the newest side
+                        # rewrites the rest of the trajectory.
+                        verify_jpeg, _ = capture_current_frame(
+                            speech, 'verify_{0}'.format(tick_number)
+                        )
+                        safe, new_side, verify_text = verify_visual_target(
+                            runtime, verify_jpeg, target, observed_side
+                        )
+                        if not safe:
+                            aborted = True
+                            print(
+                                json.dumps(
+                                    {
+                                        'route': 'approach_verify',
+                                        'tick': tick_number,
+                                        'safe': False,
+                                        'previous_side': observed_side,
+                                        'side': new_side,
+                                        'model_text': verify_text[:300],
+                                    }
+                                ),
+                                flush=True,
+                            )
+                            break
+                        pending = resteer_remaining(new_side, len(pending), observed_side)
+                        print(
+                            json.dumps(
+                                {
+                                    'route': 'approach_resteer',
+                                    'tick': tick_number,
+                                    'safe': True,
+                                    'previous_side': observed_side,
+                                    'side': new_side,
+                                    'remaining_steps': list(pending),
+                                    'remaining_wheels': [
+                                        list(step_wheels(name)) for name in pending
+                                    ],
+                                    'model_text': verify_text[:300],
+                                }
+                            ),
+                            flush=True,
+                        )
+                        observed_side = new_side
+                except Exception as exc:
+                    print('approach_exception', exc, file=sys.stderr, flush=True)
+                    aborted = True
+                finally:
+                    executor.hard_stop()
+
+                if aborted and not stop_requested and tts is not None:
+                    speak_short(
+                        tts,
+                        ('I lost ' + target)[:SPEAK_PLAY_MAX_CHARS],
+                        playback,
+                        wav_dir,
+                    )
+                if args.once is not None:
+                    break
+                continue
+
             try:
-                if object_relative_request(speech):
-                    planned, model_text = ground_visual_target(runtime, jpeg, speech)
-                else:
-                    planned = orch.plan(LoopInput(speech=speech, goal=speech, image_jpeg=jpeg))
-                    planned = recover_cosmos_fields(planned, getattr(runtime, 'last_text', ''))
-                    model_text = getattr(runtime, 'last_text', '')
+                planned = orch.plan(LoopInput(speech=speech, goal=speech, image_jpeg=jpeg))
+                planned = recover_cosmos_fields(planned, getattr(runtime, 'last_text', ''))
+                model_text = getattr(runtime, 'last_text', '')
                 action = calibrate_cosmos_action(planned, speech)
             except Exception as exc:
                 print('tick_exception', exc, file=sys.stderr, flush=True)
