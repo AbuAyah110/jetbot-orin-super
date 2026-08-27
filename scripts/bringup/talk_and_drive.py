@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import array
+import hashlib
 import json
 import math
 import os
@@ -91,7 +92,7 @@ READY_PHRASE = "I'm ready for your command"
 UNDERSTAND_FAIL_PHRASE = "I was unable to understand what you said."
 # Cosmos handles open-ended speech; the user still gets a word back, never silence.
 COSMOS_ACK_PHRASE = 'Okay'
-VISION_UNAVAILABLE_PHRASE = "Vision isn't available"
+VISION_UNAVAILABLE_PHRASE = "I can't see right now"
 LISTEN_PHRASE = "Listening"
 MIC_SECONDS = 8
 ASR_MIN_LETTERS = 2
@@ -105,6 +106,7 @@ SPEECH_PEAK_FLOOR_FS = 0.04
 # Let the USB playback stream drain so capture never records the cue tail.
 PLAYBACK_SETTLE_S = 0.25
 DEBUG_AUDIO_DIR = REPO / 'data' / 'audio' / 'debug'
+DEBUG_FRAME_DIR = REPO / 'data' / 'frames' / 'debug'
 WZ_WHEEL_SCALE = 0.4
 SPEAK_PLAY_MAX_CHARS = 64
 
@@ -146,8 +148,18 @@ _NOT_VISIBLE_MARKERS = (
 )
 
 
-def calibrate_cosmos_action(action: RobotAction) -> RobotAction:
-    """Use Cosmos only for heading; replace every drive value with calibration."""
+def object_relative_request(speech: str) -> bool:
+    return bool(
+        re.search(
+            r'\b(?:toward|towards|to|find|approach)\b.*\b(?:object|chair|door|person|box|target)\b',
+            speech or '',
+            re.IGNORECASE,
+        )
+    )
+
+
+def calibrate_cosmos_action(action: RobotAction, speech: str = '') -> RobotAction:
+    """Use an explicit grounded side only; ambiguous model motion is a stop."""
     if action is None or not action.raw_ok:
         return RobotAction(kind='stop', raw_ok=False, reason='parse_fail')
     if action.kind != 'drive':
@@ -157,20 +169,34 @@ def calibrate_cosmos_action(action: RobotAction) -> RobotAction:
     if any(marker in hint for marker in _NOT_VISIBLE_MARKERS):
         return replace(action, kind='stop', vx=0.0, wz=0.0, duration_s=0.0)
 
-    if re.search(r'\b(left|counterclockwise)\b', hint):
+    grounded = re.search(r'\bvisible\s*:\s*(left|center|right)\b', hint)
+    if object_relative_request(speech) and grounded is None:
+        return RobotAction(
+            kind='stop',
+            say=action.say,
+            goal=action.goal,
+            reason='ambiguous_visual_grounding',
+            raw_ok=True,
+        )
+
+    if grounded is not None:
+        heading = {'left': 'left', 'center': 'forward', 'right': 'right'}[grounded.group(1)]
+    elif re.search(r'\b(left|counterclockwise)\b', hint):
         heading = 'left'
     elif re.search(r'\b(right|clockwise)\b', hint):
         heading = 'right'
     elif re.search(r'\b(back|backward|backwards|reverse)\b', hint):
         heading = 'back'
-    elif action.wz > 0.0:
-        heading = 'left'
-    elif action.wz < 0.0:
-        heading = 'right'
-    elif action.vx < 0.0:
-        heading = 'back'
-    else:
+    elif re.search(r'\b(center|centre|forward|ahead|straight)\b', hint):
         heading = 'forward'
+    else:
+        return RobotAction(
+            kind='stop',
+            say=action.say,
+            goal=action.goal,
+            reason='ambiguous_cosmos_heading',
+            raw_ok=True,
+        )
 
     calibrated = intent_action(heading)
     return replace(
@@ -182,22 +208,128 @@ def calibrate_cosmos_action(action: RobotAction) -> RobotAction:
     )
 
 
-def recover_cosmos_say(action: RobotAction, model_text: str) -> RobotAction:
-    """Retain the optional short say field for pre-pulse acknowledgement."""
+def recover_cosmos_fields(action: RobotAction, model_text: str) -> RobotAction:
+    """Retain short acknowledgement and explicit grounding fields."""
     try:
-        value = extract_json_object(model_text).get('say', '')
+        data = extract_json_object(model_text)
     except (TypeError, ValueError, json.JSONDecodeError):
         return action
+    value = data.get('say', '')
     if not isinstance(value, str):
-        return action
-    say = ' '.join(value.split())
-    if not say or say in {'"', "'", '\\', '\\"', '"\\'}:
-        return action
-    return replace(action, say=say[:SPEAK_PLAY_MAX_CHARS])
+        say = ''
+    else:
+        say = ' '.join(value.split())
+        if say in {'"', "'", '\\', '\\"', '"\\'}:
+            say = ''
+    grounding = []
+    for key in ('visible', 'side', 'direction'):
+        field = data.get(key)
+        if isinstance(field, (str, bool)):
+            grounding.append('{0}={1}'.format(key, str(field).lower()))
+    reason = ' '.join(part for part in (action.reason, *grounding) if part)
+    return replace(action, say=say[:SPEAK_PLAY_MAX_CHARS], reason=reason)
+
+
+def jpeg_dimensions(jpeg: bytes) -> tuple[int, int]:
+    """Read JPEG SOF dimensions without adding a decoder dependency."""
+    index = 2
+    while index + 9 < len(jpeg):
+        if jpeg[index] != 0xFF:
+            index += 1
+            continue
+        marker = jpeg[index + 1]
+        index += 2
+        if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+            continue
+        if index + 2 > len(jpeg):
+            break
+        length = int.from_bytes(jpeg[index:index + 2], 'big')
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            height = int.from_bytes(jpeg[index + 3:index + 5], 'big')
+            width = int.from_bytes(jpeg[index + 5:index + 7], 'big')
+            return width, height
+        if length < 2:
+            break
+        index += length
+    return 0, 0
+
+
+def save_debug_frame(jpeg: bytes, speech: str) -> tuple[Path, str]:
+    digest = hashlib.sha256(jpeg).hexdigest()
+    label = re.sub(r'[^a-z0-9]+', '_', (speech or '').lower()).strip('_')[:36] or 'frame'
+    stamp_ms = time.strftime('%Y%m%d_%H%M%S') + '_{0:03d}'.format(int(time.time() * 1000) % 1000)
+    path = DEBUG_FRAME_DIR / '{0}_{1}_{2}.jpg'.format(stamp_ms, label, digest[:12])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(jpeg)
+    return path, digest
+
+
+def ground_visual_target(runtime, jpeg: bytes, speech: str) -> tuple[RobotAction, str]:
+    """Ask a minimal pixel-grounded question before allowing object motion."""
+    target = _target_phrase(speech) or 'requested object'
+    prompt = (
+        'Inspect this image. Is {0} clearly visible? Where is its center: left, center, or right? '
+        'Reply only JSON: {{"visible":true_or_false,"side":"left_or_center_or_right_or_none"}}'
+    ).format(target)
+    try:
+        raw = runtime.generate(
+            system='You are a strict visual object detector. Use pixels, not assumptions. JSON only.',
+            user_text=prompt,
+            image_jpeg=jpeg,
+            max_tokens=DRIVE_MAX_TOKENS,
+        )
+        data = extract_json_object(raw)
+    except Exception as exc:
+        return (
+            RobotAction(
+                kind='stop',
+                say=VISION_UNAVAILABLE_PHRASE,
+                goal='not_visible:{0}'.format(target),
+                reason='grounding_failed:{0}'.format(type(exc).__name__),
+                raw_ok=True,
+            ),
+            getattr(runtime, 'last_text', ''),
+        )
+
+    visible = data.get('visible')
+    side = str(data.get('side', '')).strip().lower()
+    if visible is True and side in {'left', 'center', 'right'}:
+        return (
+            RobotAction(
+                kind='drive',
+                goal='visible:{0}'.format(side),
+                reason='grounded:{0}'.format(target),
+                raw_ok=True,
+            ),
+            raw,
+        )
+    if visible is False:
+        return (
+            RobotAction(
+                kind='stop',
+                say=("I don't see " + target)[:SPEAK_PLAY_MAX_CHARS],
+                goal='not_visible:{0}'.format(target),
+                reason='grounded_absent',
+                raw_ok=True,
+            ),
+            raw,
+        )
+    return (
+        RobotAction(
+            kind='stop',
+            say=VISION_UNAVAILABLE_PHRASE,
+            goal='not_visible:{0}'.format(target),
+            reason='ambiguous_grounding_json',
+            raw_ok=True,
+        ),
+        raw,
+    )
 
 
 def _target_phrase(speech: str, goal: str = '') -> str:
     target = ' '.join((goal or '').strip().split())
+    if re.match(r'^(?:not_?visible|visible)\s*:', target, re.IGNORECASE):
+        target = ''
     if target:
         target = re.sub(
             r'^(?:move|go|drive|head|navigate)\s+(?:toward|towards|to)\s+',
@@ -827,7 +959,22 @@ def main() -> int:
                 jpeg = camera.capture_jpeg()
                 if not jpeg:
                     raise RuntimeError('CSI JPEG capture returned no bytes')
+                dimensions = jpeg_dimensions(jpeg)
+                if dimensions != (448, 448):
+                    raise RuntimeError('unexpected CSI JPEG dimensions {0}'.format(dimensions))
+                frame_path, frame_hash = save_debug_frame(jpeg, speech)
                 (wav_dir / 'talk_and_drive.jpg').write_bytes(jpeg)
+                print(
+                    json.dumps(
+                        {
+                            'vision_frame': str(frame_path),
+                            'bytes': len(jpeg),
+                            'dimensions': list(dimensions),
+                            'sha256': frame_hash,
+                        }
+                    ),
+                    flush=True,
+                )
             except Exception as exc:
                 executor.hard_stop()
                 print('camera_capture_failed', exc, file=sys.stderr, flush=True)
@@ -838,13 +985,18 @@ def main() -> int:
                 continue
 
             try:
-                planned = orch.plan(LoopInput(speech=speech, goal=speech, image_jpeg=jpeg))
-                planned = recover_cosmos_say(planned, getattr(runtime, 'last_text', ''))
-                action = calibrate_cosmos_action(planned)
+                if object_relative_request(speech):
+                    planned, model_text = ground_visual_target(runtime, jpeg, speech)
+                else:
+                    planned = orch.plan(LoopInput(speech=speech, goal=speech, image_jpeg=jpeg))
+                    planned = recover_cosmos_fields(planned, getattr(runtime, 'last_text', ''))
+                    model_text = getattr(runtime, 'last_text', '')
+                action = calibrate_cosmos_action(planned, speech)
             except Exception as exc:
                 print('tick_exception', exc, file=sys.stderr, flush=True)
                 executor.hard_stop()
                 action = parse_action(None)
+                model_text = getattr(runtime, 'last_text', '')
 
             row = {
                 'route': 'cosmos',
@@ -855,7 +1007,7 @@ def main() -> int:
                 'duration_s': action.duration_s,
                 'raw_ok': action.raw_ok,
                 'reason': action.reason,
-                'model_text': getattr(runtime, 'last_text', '')[:400],
+                'model_text': model_text[:400],
             }
             print(json.dumps(row, ensure_ascii=False), flush=True)
             feedback = cosmos_feedback(action, speech)

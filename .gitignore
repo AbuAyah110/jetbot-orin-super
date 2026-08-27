@@ -51,6 +51,9 @@ build/
 !/data/benchmarks/.gitkeep
 /data/audio/**
 !/data/audio/.gitkeep
+/data/frames/**
+!/data/frames/**/
+!/data/frames/**/.gitkeep
 /data/bringup/**
 !/data/bringup/.gitkeep
 # Fetched model checkpoints and downloaded wheels (archives, espeak-ng G2P data,

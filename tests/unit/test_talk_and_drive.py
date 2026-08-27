@@ -21,6 +21,7 @@ from talk_and_drive import (  # noqa: E402
     asr_transcript_usable,
     calibrate_cosmos_action,
     clamp_test_action,
+    ground_visual_target,
     unicycle_wheels,
 )
 
@@ -51,9 +52,9 @@ def test_parse_fail_is_stop():
 def test_cosmos_tiny_velocity_becomes_calibrated_forward_tick():
     planned = parse_action(
         '{"action":"drive","vx":0.03,"wz":0,"duration_s":0.01,'
-        '"goal":"red object","reason":"visible ahead"}'
+        '"goal":"visible:center","reason":"red object is visible"}'
     )
-    action = calibrate_cosmos_action(planned)
+    action = calibrate_cosmos_action(planned, 'MOVE TOWARDS THE RED OBJECT')
     assert action.kind == 'drive'
     assert action.vx == pytest.approx(0.65)
     assert action.wz == 0.0
@@ -61,11 +62,72 @@ def test_cosmos_tiny_velocity_becomes_calibrated_forward_tick():
     assert unicycle_wheels(action.vx, action.wz) == pytest.approx((0.65, 0.65))
 
 
+def test_small_positive_wz_does_not_default_to_left():
+    planned = parse_action(
+        '{"action":"drive","vx":0.22,"wz":0.01,"duration_s":0.01,'
+        '"goal":"red object","reason":"directed movement"}'
+    )
+    action = calibrate_cosmos_action(planned, 'MOVE TOWARDS THE RED OBJECT')
+    assert action.kind == 'stop'
+    assert action.reason == 'ambiguous_visual_grounding'
+    assert action.vx == action.wz == 0.0
+
+
+@pytest.mark.parametrize(
+    'side, wheels',
+    [
+        ('left', (-0.65, 0.65)),
+        ('center', (0.65, 0.65)),
+        ('right', (0.65, -0.65)),
+    ],
+)
+def test_grounded_visible_side_selects_calibrated_tick(side, wheels):
+    planned = parse_action(
+        json.dumps({'action': 'drive', 'vx': 0, 'wz': 0, 'goal': 'visible:' + side})
+    )
+    action = calibrate_cosmos_action(planned, 'MOVE TOWARDS THE RED OBJECT')
+    assert action.duration_s == pytest.approx(1.2)
+    assert unicycle_wheels(action.vx, action.wz) == pytest.approx(wheels)
+
+
 def test_invalid_cosmos_json_calibration_stays_stopped():
     action = calibrate_cosmos_action(parse_action('not json'))
     assert action.kind == 'stop'
     assert action.raw_ok is False
     assert action.vx == action.wz == action.duration_s == 0.0
+
+
+def test_grounding_question_uses_pixels_and_requires_visible_side():
+    class Runtime:
+        last_text = ''
+
+        def generate(self, **kwargs):
+            assert kwargs['image_jpeg'] == b'jpeg'
+            assert 'Use pixels' in kwargs['system']
+            self.last_text = '{"visible":true,"side":"right"}'
+            return self.last_text
+
+    planned, raw = ground_visual_target(
+        Runtime(), b'jpeg', 'MOVE TOWARDS THE RED OBJECT'
+    )
+    assert raw == '{"visible":true,"side":"right"}'
+    action = calibrate_cosmos_action(planned, 'MOVE TOWARDS THE RED OBJECT')
+    assert unicycle_wheels(action.vx, action.wz) == pytest.approx((0.65, -0.65))
+
+
+def test_grounding_absent_is_spoken_stop():
+    class Runtime:
+        last_text = '{"visible":false,"side":"none"}'
+
+        def generate(self, **kwargs):
+            return self.last_text
+
+    planned, _ = ground_visual_target(
+        Runtime(), b'jpeg', 'MOVE TOWARDS THE GREEN OBJECT'
+    )
+    assert planned.kind == 'stop'
+    assert planned.say == "I don't see THE GREEN OBJECT"
+    assert planned.vx == planned.wz == 0.0
 
 
 def test_executor_parse_fail_and_drive_always_stop():

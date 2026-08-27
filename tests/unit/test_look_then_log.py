@@ -60,6 +60,19 @@ def test_drive_mode_no_think_and_token_clamp():
     assert 'extended thinking' in runtime.calls[0]['user_text'].lower() or 'Do not use extended thinking' in runtime.calls[0]['user_text']
 
 
+def test_object_relative_prompt_requires_grounded_visible_side_and_omits_history():
+    runtime = FakeRuntime('{"action":"stop","goal":"not_visible:red object"}')
+    orch = OneProcessOrchestrator(runtime, LogOnlyExecutor(), drive_mode=True)
+    orch.history.add('assistant', 'stale direction left')
+    orch.plan(LoopInput(speech='MOVE TOWARDS THE RED OBJECT', image_jpeg=b'\xff\xd8'))
+    prompt = runtime.calls[0]['user_text']
+    assert 'VISUAL GROUNDING TEST' in prompt
+    assert 'visible:left' in prompt
+    assert 'not_visible:<target>' in prompt
+    assert 'stale direction left' not in prompt
+    assert runtime.calls[0]['image_jpeg'] == b'\xff\xd8'
+
+
 def test_invalid_json_logs_stop_and_hold_stop_before_infer():
     runtime = FakeRuntime('not json')
     exe = LogOnlyExecutor()

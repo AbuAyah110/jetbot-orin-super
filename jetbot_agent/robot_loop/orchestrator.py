@@ -9,6 +9,7 @@ action execution are injected only after their hardware gates pass.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Callable, Optional, Protocol
 
@@ -59,6 +60,26 @@ class LoopInput:
 
 def build_user_prompt(*, request: LoopInput, history: str, moving: bool) -> str:
     """Build one bounded prompt; prior images are never included."""
+    object_relative = bool(
+        re.search(
+            r'\b(?:toward|towards|to|find|approach)\b.*\b(?:object|chair|door|person|box|target)\b',
+            request.speech,
+            re.IGNORECASE,
+        )
+    )
+    if object_relative:
+        return '\n'.join(
+            (
+                'VISUAL GROUNDING TEST. Inspect only the attached current image.',
+                'Target request: {0}'.format(request.speech),
+                'Reply with one complete one-line JSON object under 60 tokens.',
+                'Visible target: {"action":"drive","vx":0,"wz":0,"duration_s":0,'
+                '"say":"","goal":"visible:left|center|right","reason":"grounded"}',
+                'Absent/uncertain: {"action":"stop","vx":0,"wz":0,"duration_s":0,'
+                '"say":"I don\'t see <target>","goal":"not_visible:<target>","reason":"grounded"}',
+                'Select one literal side, never the | list. Never drive without visible:<side>.',
+            )
+        )
     base = '\n'.join(
         (
             'Respond with JSON only.',
