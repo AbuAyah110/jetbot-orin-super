@@ -90,6 +90,63 @@ Locked process (when artifacts exist): CSI JPEG → resize 448² → Edge-LLM Co
 
 Explicitly **not**: ROS2, Nav2, extra HTTP LLM server, MiniLM, sqlite-vec, BGE GPU TRT, TensorRT-LLM, FastPitch/NeMo/Riva, Hermes Agent, live Jina CLIP / SmolVLA / Gemma 4 audio / Qwen3-Embedding, PyTorch/`transformers` on this Nano, thinking while moving, Qwen2.5-VL.
 
+## Memory tactics from the locked plan
+
+Keep idle UMA small so Cosmos INT4 + FP16 ViT (~4.3–4.7 GiB) can load. **Do not** use Gemini’s 3.90 GB table. Abort if a loaded Cosmos engine shows **tegrastats RAM ≥ 5.0 GiB**.
+
+| Tactic | Why |
+| --- | --- |
+| CSI **448² JPEG**, not 1080p ROS | ViT tokens and host copies stay small |
+| **maxKVCacheCapacity 4096**, not 262k | KV dominates UMA after weights |
+| **One** in-process Edge-LLM, **no** extra HTTP LLM server | Second server doubles engines |
+| **BGE-small on CPU** later, never BGE GPU TRT | GPU stays for Cosmos |
+| Think mode **parked only** | Extra decode while driving blows the budget |
+| **No** live PyTorch / Jina / SmolVLA | Those stacks do not fit beside Cosmos |
+| Zipformer + Piper **CPU** (~192 MiB) | Voice stays off the GPU |
+| GUI **multi-user.target** | Desktop is hundreds of MiB to GiB |
+| OS idle often **1.2–2.2 GiB** used without Cursor | Target **~5.5–6.5 GiB available** for Cosmos |
+| 32 GiB `/ssd/32GB.swap` **kept**; **`vm.swappiness=10`** | Swap is OOM safety; Cosmos must not page |
+
+Script (dry-run default; privileged steps need `sudo`):
+
+```bash
+./scripts/JETSON_IDLE_RAM.sh
+sudo ./scripts/JETSON_IDLE_RAM.sh --apply
+```
+
+`--apply` stops/disables docker, `nv-l4t-usb-device-mode`, bluetooth, cups, snapd; writes `/etc/sysctl.d/99-jetbot-memory.conf`; rewrites `jetbot_oled.service` to run `oled_status.py` **by path** (no `python3 -m jetbot.apps…`). It does **not** kill `nvargus-daemon`, delete swap, uninstall JetPack, or `llm_build`.
+
+Workstation ONNX (still running as of this write): quantized checkpoint on the PC is `~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B-ModelOpt-INT4/quantized/` (~2.7 GB). After export, rsync to this Jetson: `~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/onnx/`. **Do not** `llm_build` until that tree has `onnx/llm/model.onnx`.
+
+### Idle RAM this session (2026-08-27, waiting on rsync)
+
+Measured **before** any stop (Cursor SSH still connected):
+
+| Item | Value |
+| --- | --- |
+| `free -h` | **2.6 GiB used** / 2.2 GiB free / **4.6 GiB available** of 7.4 GiB |
+| tegrastats | **2859 / 7620 MB**, SWAP 631 / 32768 MB (cached 116 MB), GR3D 0% |
+| default target | **`multi-user.target`** (GUI already off; gdm inactive) |
+| `nvpmodel -q` | **MAXN_SUPER** (left unchanged) |
+| Swap | `/ssd/32GB.swap` **32 GiB**, **631 MiB used** — **not deleted**, not grown |
+| `vm.swappiness` | **60** — cannot change without sudo; script documents `sysctl -w vm.swappiness=10` |
+| Disk `/` | 73G used / 34G avail (69%); **no Qwen** trees |
+| jupyter / ipykernel | **dead** |
+| rviz / nav2 / firefox / chromium | **none** |
+| CSI | `nvargus-daemon` PID 5550, **~1.4 MiB RSS**, no gst preview (daemon kept) |
+| OLED | `python3 -m jetbot.apps.oled_status` PID 904, **~4.6 MiB RSS** / **3.0 MiB PSS** (not the historical 160+ MiB). Unit still `-m`; by-path fix is in git + `JETSON_IDLE_RAM.sh --apply` (needs sudo to restart the **system** unit). |
+| docker | socket+service **active**, `docker ps` **empty**; dockerd ~12.5 MiB + containerd ~10 MiB RSS |
+| snapd | **active**, ~37 MiB RSS |
+| `nv-l4t-usb-device-mode` | **active** |
+| bluetooth / cups / ros2 | inactive |
+| Cursor `node` (editor) | **~1.9 GiB PSS** across ~15 procs; top RSS ~545 / 514 / 501 / 241 MiB. **Goes away when the editor disconnects.** |
+
+**Without sudo this pass:** no docker/snapd/usb-gadget stop, no sysctl, no OLED restart. User `--apply` only confirmed leftover GUI/Jupyter processes were already gone. Expected extra reclaim after `sudo … --apply`: on the order of **~70–80 MiB** (snapd+docker+gadget), not GiB.
+
+**Vs locked idle target 1.2–1.8 GiB used / 5.5–6.5 GiB available:** we are at **2.6 GiB used / 4.6 GiB available**. The gap is almost entirely **Cursor remote** (~1.5–1.9 GiB). OS+JetPack+OLED+nvargus with Cursor gone is already in the **~1.2–2.2 GiB used** band from the locked plan. Do not stop Cursor from this script.
+
+OLED **delta this session: ~0 MiB** (already slim; the win is preventing a future `-m` restart from importing `jetbot/__init__.py`).
+
 ## Exact on-device engine build (run only after ONNX arrives)
 
 Export-time (workstation, already required in the ONNX tree): `--externalize-weights int4_ffn --int4-gemm-plugin-version 1`.
@@ -140,5 +197,6 @@ Build LLM then ViT **sequentially**, nothing else large resident (stop voice/age
 | `llm_build` started | **No** (waiting on workstation ONNX) |
 | Cosmos engine loaded / tegrastats | **N/A** |
 | BGE | Not on disk (CPU later) |
+| Idle RAM (Cursor still on) | **2.6 GiB used / 4.6 GiB available**; sudo `JETSON_IDLE_RAM.sh --apply` still owed |
 
 When ONNX lands: run `g_cosmos_llm_build.sh`, attach peak RAM/swap, and abort if tegrastats ≥ 5.0 GiB on a loaded inference engine.
