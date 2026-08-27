@@ -109,6 +109,17 @@ def test_single_tick_plan_is_padded_to_the_bounded_budget():
     assert expand_ticks(parked.steps) == ('forward',)
 
 
+def test_empty_plan_with_a_grounded_side_is_built_from_that_side():
+    plan = parse_approach_plan(_plan(side='right', plan=[]))
+    assert plan.raw_ok is True
+    assert plan.visible is True
+    assert plan.reason.startswith('plan_from_side')
+    assert expand_ticks(plan.steps) == ('arc_right',) * 3
+
+    centered = parse_approach_plan(_plan(side='center', plan=[]))
+    assert expand_ticks(centered.steps) == ('forward',) * 3
+
+
 def test_arc_step_never_pivots_or_stalls_a_wheel():
     for step in ('arc_left', 'arc_right'):
         left, right = step_wheels(step)

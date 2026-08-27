@@ -112,6 +112,8 @@ def parse_approach_plan(payload: str) -> ApproachPlan:
         return stopped_plan('plan_invalid_side', goal=goal)
 
     raw_steps = data.get('plan')
+    if raw_steps is None:
+        raw_steps = []
     if not isinstance(raw_steps, list):
         return stopped_plan('plan_missing_steps', goal=goal)
 
@@ -133,8 +135,12 @@ def parse_approach_plan(payload: str) -> ApproachPlan:
         if ticks_left == 0:
             break
 
+    # The grounded side, not the step list, is what the model is reliable at.
+    # It frequently answers with a correct side and an empty plan, which is
+    # still enough to build the same trajectory the re-steer loop would.
     if not steps:
-        return stopped_plan('plan_empty', goal=goal)
+        steps = [PlanStep(_SIDE_TO_STEP[side], PLAN_MAX_TICKS)]
+        reason = ' '.join(part for part in ('plan_from_side', reason) if part)[:160]
 
     # Pixel grounding wins over a contradictory model step. Most importantly,
     # a centered target can never be converted into a left/right turn.
