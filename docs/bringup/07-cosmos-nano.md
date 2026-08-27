@@ -129,7 +129,8 @@ Logs (ignored, on-device): `data/edgellm/cosmos/logs/JETSON_BUILD.log`,
 `JETSON_BUILD_verify.log`, `llm_inference_load.log`,
 `llm_inference_drive.log`, `tegrastats-build.txt`,
 `tegrastats-cosmos-load.txt`, `vlm_drive_*.json`, `vlm_drive_inference.log`,
-`tegrastats-vlm-drive.txt`.
+`tegrastats-vlm-drive.txt`, `tegrastats-coresidency-*.txt`,
+`coresidency_voice_report.json`.
 
 ## VLM CSI JPEG smoke — pass (2026-08-27 14:31 CDT)
 
@@ -152,6 +153,29 @@ Resident PID 399034 (`llm_inference` writing `/tmp/cosmos_reason2_resident.fifo`
 | Edge-LLM peak UMA | 1101 MB (profiler) |
 
 Board total crossed 5 GiB because Cursor remote is still connected (~2.4 GiB used before this load). The VLM-only delta stayed **~2.95 GiB**, under the 5.0 GiB abort. Did not halt.
+
+## Voice co-residency — pass (2026-08-27 15:05 CDT)
+
+Zipformer int8 ASR + Piper Lessac-low int8 TTS (`sherpa-onnx==1.13.6`, CPU, 2 threads) ran **beside** a resident Cosmos `llm_inference` (separate processes, same UMA). Models were missing under `data/models/` (placeholders only) and were re-fetched with `scripts/bringup/fetch_voice_models.sh`. Offline TTS→WAV fixture only: **no `arecord`**, **no `aplay`**, motors not opened. GPU stayed **0%** during the voice pass.
+
+Cosmos was loaded from `~/jetbot-thin-stack/cosmos-engines/` with `warmup=0`, `max_generate_length=64`, temperature 0, text-only drive prompt (`{"action":"stop"}`). Output went to `/tmp/cosmos_reason2_resident.fifo` so the process stayed mapped after generate. Do **not** `cat` that FIFO.
+
+| Measure | Value |
+| --- | --- |
+| Idle tegrastats (Cursor connected) | **2616–2625 / 7620 MB** |
+| Cosmos-only tegrastats | **5583–5596 / 7620 MB** (stable **~5584**) |
+| Cosmos delta over idle | **~2960 MB = 2.89 GiB** |
+| Cosmos+voice peak tegrastats | **5712 / 7620 MB** (15:05:08) |
+| Voice add-on over Cosmos-only | **~128 MB** board-wide |
+| Combined model delta vs idle | **~3090 MB = 3.02 GiB** |
+| Cosmos RSS / PSS | **448.1 MiB / 435.2 MiB** (PID 406078; UMA under-count) |
+| Voice peak RSS (`VmHWM`) | **165340 KiB = 161.5 MiB** (plan ~192 MiB) |
+| Swap | **1481–1490 / 32768 MB** (did not grow) |
+| ASR | WER **0.00**, RTF **0.045**, transcript `TESTING ONE TWO THREE` |
+| TTS | 1.36 s audio, RTF **0.249**, WAV only |
+| OOM | **None** (`dmesg` empty; neither process killed) |
+
+Fits: **yes**. Voice is under the ~192 MiB Stage F peak; Cosmos is ~2.89 GiB vs the ~3 GiB prior load. Together they add **~3.0 GiB** on UMA. Board total **5.58 GiB** still includes Cursor remote (~1.1 GiB RSS); that is not a VLM abort. Combined engines stay well under the **5.0 GiB** Cosmos halt line. No HTTP LLM server, PyTorch, Jina GPU, or BGE GPU.
 
 ## Qwen2.5-VL removed (2026-08-27)
 
@@ -412,6 +436,7 @@ Build LLM then ViT **sequentially**, nothing else large resident (stop voice/age
 | Cosmos engine loaded / tegrastats | **Pass** — peak 5441/7620 MB, **delta 2.88 GiB**, under the 5.0 GiB abort |
 | Text inference sanity | **Pass** — 3/3 drive-mode requests, temperature 0, 96 tokens |
 | VLM + 448² CSI JPEG | **Pass** — 1 image, 196 vis tokens, text `action=stop`; JSON `say` invalid |
+| Voice co-residency (Zipformer+Piper CPU) | **Pass** — peak **5712/7620 MB**; voice **161.5 MiB** RSS; Cosmos delta **2.89 GiB**; no OOM |
 | Motors / camera loop | **Not started** (one-shot CSI JPEG only; no PWM) |
 | BGE | 127 MiB local CPU ONNX candidate in ignored data; not loaded |
 
