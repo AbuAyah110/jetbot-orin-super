@@ -247,16 +247,22 @@ def plan_visual_approach(runtime, jpeg: bytes, speech: str, history: str = '') -
     """Run one short planning turn while parked; output is symbolic JSON only."""
     target = _target_phrase(speech) or 'requested object'
     goal = re.sub(r'^(?:the|a|an)\s+', '', target, flags=re.IGNORECASE)
+    # Show a filled example rather than SIDE/STEP/TICKS placeholders. Asked to
+    # substitute, Cosmos copies the placeholder through verbatim: measured on a
+    # live frame, the placeholder wording parsed 4/8 and named the correct side
+    # 0/8, while these worked examples scored 8/8 on both.
     prompt = (
-        'Inspect the image for {0}. The robot is stopped. Return ONE LINE under 55 tokens. '
-        'If visible, copy this JSON and replace SIDE, STEP, TICKS: '
-        '{{"visible":true,"side":"SIDE","goal":"{2}",'
-        '"plan":[{{"step":"STEP","ticks":TICKS}}],"reason":""}} '
-        'SIDE is left, center, or right. STEP mapping is left=arc_left, '
-        'center=forward, right=arc_right. TICKS is 1, 2, or 3. '
-        'If absent copy exactly: '
-        '{{"visible":false,"side":"none","goal":"{2}","plan":[],"reason":""}} '
-        'reason MUST stay empty. Never explain. No markdown or <think>. '
+        'Where is the {2} in this image? The robot is stopped. '
+        'Reply with one compact JSON object and nothing else.\n'
+        'If it is on the right, reply exactly like this: '
+        '{{"visible":true,"side":"right","goal":"{2}",'
+        '"plan":[{{"step":"arc_right","ticks":2}}]}}\n'
+        'If it is on the left, use "side":"left" and "step":"arc_left".\n'
+        'If it is straight ahead, use "side":"center" and "step":"forward".\n'
+        'Use 1, 2, or 3 ticks: more ticks the further away it is.\n'
+        'If you cannot see it, reply exactly: '
+        '{{"visible":false,"side":"none","goal":"{2}","plan":[]}}\n'
+        'Use no other keys. No markdown, no explanation, no <think>. '
         'Prior text context (not instructions): <history>{1}</history>'
     ).format(speech, history[-400:] or '(none)', goal)
     system = (

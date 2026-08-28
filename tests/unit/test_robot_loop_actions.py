@@ -14,8 +14,17 @@ from jetbot_agent.robot_loop.actions import (
     SPEAK_MAX_CHARS,
     VX_MAX,
     WZ_MAX,
+    extract_json_object,
     parse_action,
     parse_model_output,
+)
+
+# Cosmos answered correctly, then overran the 96-token cap describing itself in
+# "reason", leaving the object unterminated.
+COSMOS_TRUNCATED_REASON = (
+    '{"visible":true,"side":"right","goal":"blue object",'
+    '"plan":[{"step":"arc_right","ticks":2}],'
+    '"reason":"The blue object is on the right side and'
 )
 
 # Real Cosmos-Reason2-2B drive-mode fragment: invalid TTS quote, nonzero stop.
@@ -24,6 +33,29 @@ COSMOS_BROKEN_SAY = (
     '"say":"\\"","goal":"avoid red object",'
     '"reason":"The red object is in the path, causing a potential collision."}'
 )
+
+
+def test_output_cut_off_mid_string_keeps_the_finished_fields():
+    recovered = extract_json_object(COSMOS_TRUNCATED_REASON)
+
+    assert recovered['visible'] is True
+    assert recovered['side'] == 'right'
+    assert recovered['plan'] == [{'step': 'arc_right', 'ticks': 2}]
+    assert 'reason' not in recovered
+
+
+def test_salvage_never_invents_a_value_that_was_cut_off():
+    assert 'side' not in extract_json_object('{"visible":true,"side":')
+    assert extract_json_object(
+        '{"visible":true,"side":"left","plan":[{"step":"arc_left","tic'
+    )['plan'] == [{'step': 'arc_left'}]
+
+
+def test_salvage_does_not_rescue_prose_or_emptiness():
+    with pytest.raises(Exception):
+        extract_json_object('I think I should probably turn left now')
+    with pytest.raises(Exception):
+        extract_json_object('')
 
 
 def test_valid_drive():

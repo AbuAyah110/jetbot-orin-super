@@ -161,6 +161,78 @@ def _extract_object_span(text: str) -> Optional[str]:
     return None
 
 
+def _salvage_truncated_object(text: str) -> Optional[dict[str, Any]]:
+    """Recover the complete leading fields of a JSON object cut off mid-flight.
+
+    A generation cap can end the output inside a long trailing string, which
+    leaves an otherwise well-formed object unterminated. The already-closed
+    fields are still trustworthy, so drop the incomplete tail and close what is
+    open rather than discarding a usable answer.
+    """
+    start = text.find('{')
+    if start < 0:
+        return None
+    body = text[start:]
+    stack: list[str] = []
+    in_string = False
+    escape = False
+    # Offsets where a value had just been completed, newest last.
+    safe_cuts: list[int] = []
+    for index, char in enumerate(body):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == '\\':
+                escape = True
+            elif char == '"':
+                in_string = False
+                safe_cuts.append(index + 1)
+            continue
+        if char == '"':
+            in_string = True
+        elif char in '{[':
+            stack.append('}' if char == '{' else ']')
+        elif char in '}]':
+            if stack:
+                stack.pop()
+            safe_cuts.append(index + 1)
+        elif char in '0123456789truefalsn':
+            safe_cuts.append(index + 1)
+    for cut in reversed(safe_cuts):
+        head = body[:cut].rstrip().rstrip(',')
+        closers: list[str] = []
+        in_str = False
+        esc = False
+        for char in head:
+            if in_str:
+                if esc:
+                    esc = False
+                elif char == '\\':
+                    esc = True
+                elif char == '"':
+                    in_str = False
+                continue
+            if char == '"':
+                in_str = True
+            elif char == '{':
+                closers.append('}')
+            elif char == '[':
+                closers.append(']')
+            elif char in '}]' and closers:
+                closers.pop()
+        if in_str or not head.startswith('{'):
+            continue
+        candidate = head + ''.join(reversed(closers))
+        # A key with no value ("side": ) cannot be closed into valid JSON.
+        try:
+            obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj:
+            return obj
+    return None
+
+
 def extract_json_object(text: str) -> dict[str, Any]:
     """Load the first JSON object from model text (markdown fences allowed)."""
     raw = text.strip()
@@ -174,7 +246,10 @@ def extract_json_object(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         span = _extract_object_span(raw)
         if span is None:
-            raise
+            salvaged = _salvage_truncated_object(raw)
+            if salvaged is None:
+                raise
+            return salvaged
         obj = json.loads(span)
     if not isinstance(obj, dict):
         raise ValueError('JSON root is not an object')
