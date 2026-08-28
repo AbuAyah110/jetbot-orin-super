@@ -14,12 +14,16 @@ from jetbot_agent.robot_loop.actions import RobotAction, parse_action  # noqa: E
 from jetbot_agent.robot_loop.intents import LIVE_DURATION_MAX_S, LIVE_VX_MAX, LIVE_WZ_MAX  # noqa: E402
 
 from talk_and_drive import (  # noqa: E402
+    SILENCE_FAIL_PHRASE,
     SPEAK_PLAY_MAX_CHARS,
+    SPEECH_RMS_FLOOR_FS,
     TEST_DURATION_MAX_S,
     UNDERSTAND_FAIL_PHRASE,
     TalkDriveExecutor,
     _target_phrase,
     asr_transcript_usable,
+    collapse_repeats,
+    speak_understand_fail,
     calibrate_cosmos_action,
     clamp_test_action,
     ground_visual_target,
@@ -225,3 +229,39 @@ def test_asr_miss_rejects_empty_and_garbage():
     assert asr_transcript_usable('go') is True
     assert asr_transcript_usable('drive forward') is True
     assert len(UNDERSTAND_FAIL_PHRASE) <= SPEAK_PLAY_MAX_CHARS
+
+
+def test_repeated_command_folds_to_one_copy():
+    """Waiting on a slow reply, the speaker said this eight times in one capture."""
+    assert collapse_repeats(
+        'MOVE FORWARD MOVE FORWARD MOVE FORWARD MOVE FORWARD MOVE FORWARD '
+        'MOVE FORWARD MOVE FORWARD MOVE'
+    ) == 'MOVE FORWARD'
+    assert collapse_repeats('MOVE FORWARD MOVE FORWARD') == 'MOVE FORWARD'
+
+
+def test_collapse_leaves_a_normal_sentence_alone():
+    for phrase in (
+        'MOVE TOWARD BLUE OBJECT',
+        'what is your plan to move toward the blue object',
+        'AND ITS BLUE OBJECTS MOVE TOWARDS BLUE OBJECT BLUE BLUE BLUE',
+        'STOP',
+    ):
+        assert collapse_repeats(phrase) == phrase
+
+
+def test_silence_and_mumbling_get_different_advice(capsys):
+    speak_understand_fail(None, '', Path('.'), heard_voice=False)
+    assert SILENCE_FAIL_PHRASE in capsys.readouterr().out
+
+    speak_understand_fail(None, '', Path('.'), heard_voice=True)
+    assert UNDERSTAND_FAIL_PHRASE in capsys.readouterr().out
+
+
+def test_rms_floor_separates_measured_speech_from_measured_silence():
+    """RMS in full scale from the saved captures: silence 0.0025-0.0034,
+    spoken commands 0.008-0.041."""
+    for silent in (0.0025, 0.0030, 0.0034):
+        assert silent < SPEECH_RMS_FLOOR_FS
+    for spoken in (0.0081, 0.0210, 0.0411):
+        assert spoken >= SPEECH_RMS_FLOOR_FS

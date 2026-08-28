@@ -109,6 +109,9 @@ DESCRIBE_MAX_TOKENS = 96
 TEST_DURATION_MAX_S = LIVE_DURATION_MAX_S
 READY_PHRASE = "I'm ready for your command"
 UNDERSTAND_FAIL_PHRASE = "I was unable to understand what you said."
+# Silence and an unintelligible sentence need different advice: move closer
+# versus wait for the beep.
+SILENCE_FAIL_PHRASE = "I did not hear anything. Please speak after the beep."
 # Cosmos handles open-ended speech; the user still gets a word back, never silence.
 COSMOS_ACK_PHRASE = 'Okay'
 VISION_UNAVAILABLE_PHRASE = "I can't see right now"
@@ -122,6 +125,10 @@ BEEP_RATE = 16000
 # Peak below this is room noise, not a voice; used for logging and to decide
 # whether an unusable transcript deserves the spoken fail phrase.
 SPEECH_PEAK_FLOOR_FS = 0.04
+# Peak alone does not separate a voice from a door slam: across 358 saved
+# captures, silent rooms still peaked at 0.045 while spoken commands sat at
+# 0.008-0.041 RMS against a 0.0025-0.0034 RMS floor. RMS is the reliable test.
+SPEECH_RMS_FLOOR_FS = 0.006
 # Let the USB playback stream drain so capture never records the cue tail.
 PLAYBACK_SETTLE_S = 0.25
 DEBUG_AUDIO_DIR = REPO / 'data' / 'audio' / 'debug'
@@ -660,6 +667,28 @@ def play_wav_once(path: Path, playback_dev: str) -> None:
         pkill_aplay()
 
 
+def collapse_repeats(text: str) -> str:
+    """Fold a phrase the speaker repeated into a single copy.
+
+    Waiting on a slow reply, people say "move forward" over and over; one
+    capture held it eight times. Cosmos does not need the repetition and the
+    tokens are not free.
+    """
+    words = (text or '').split()
+    if len(words) < 4:
+        return ' '.join(words)
+    for size in range(1, len(words) // 2 + 1):
+        unit = words[:size]
+        if len(words) % size and words[-(len(words) % size):] != unit[:len(words) % size]:
+            continue
+        if all(
+            words[start:start + size] == unit[:len(words) - start]
+            for start in range(0, len(words), size)
+        ):
+            return ' '.join(unit)
+    return ' '.join(words)
+
+
 def asr_transcript_usable(text: str) -> bool:
     """False for empty, whitespace-only, or garbage/very short ASR."""
     speech = ' '.join((text or '').split())
@@ -713,11 +742,17 @@ def stamp() -> str:
     return time.strftime('%H:%M:%S')
 
 
-def speak_understand_fail(tts, playback_dev: str, wav_dir: Path) -> None:
-    print('understand_fail_tts', UNDERSTAND_FAIL_PHRASE, flush=True)
+def speak_understand_fail(
+    tts,
+    playback_dev: str,
+    wav_dir: Path,
+    heard_voice: bool = True,
+) -> None:
+    phrase = UNDERSTAND_FAIL_PHRASE if heard_voice else SILENCE_FAIL_PHRASE
+    print('understand_fail_tts', phrase, flush=True)
     if tts is None or not playback_dev:
         return
-    speak_short(tts, UNDERSTAND_FAIL_PHRASE, playback_dev, wav_dir)
+    speak_short(tts, phrase, playback_dev, wav_dir)
 
 
 def speak_short(
@@ -1066,6 +1101,7 @@ def main() -> int:
 
     beep_wav = write_beep_wav(wav_dir / 'talk_and_drive_beep.wav')
     last_peak = 0.0
+    last_rms = 0.0
 
     def cue_then_capture(cap_path: Path) -> None:
         """Beep, drain playback, then open the mic. Cue must not be recorded."""
@@ -1082,10 +1118,11 @@ def main() -> int:
         print('{0} mic_closed'.format(stamp()), flush=True)
 
     def transcribe_path(path: Path) -> str:
-        nonlocal last_peak
+        nonlocal last_peak, last_rms
         samples, rate = read_wav_mono(path)
         peak, rms = wav_energy(samples)
         last_peak = peak
+        last_rms = rms
         kept = ''
         if args.keep_captures:
             kept = str(DEBUG_AUDIO_DIR / 'mic_{0}.wav'.format(
@@ -1111,7 +1148,7 @@ def main() -> int:
             return ''
         if not samples:
             return ''
-        return asr.transcribe(samples, rate).strip()
+        return collapse_repeats(asr.transcribe(samples, rate).strip())
 
     def collect_speech() -> Optional[str]:
         nonlocal first_capture
@@ -1196,7 +1233,12 @@ def main() -> int:
             if not asr_transcript_usable(speech):
                 executor.hard_stop()
                 consecutive_misses += 1
-                speak_understand_fail(tts, playback, wav_dir)
+                speak_understand_fail(
+                    tts,
+                    playback,
+                    wav_dir,
+                    heard_voice=last_rms >= SPEECH_RMS_FLOOR_FS,
+                )
                 if args.once is not None or args.max_turns == 1:
                     break
                 continue
