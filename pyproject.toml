@@ -15,7 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
-vision = ["opencv-python-headless>=4.8"]
+vision = ["opencv-python-headless>=4.8", "Pillow>=10.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
