@@ -54,7 +54,7 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | Robot integration | **Talk-and-drive live** — VAD listen, no beep; PWM via `jetbot.Robot` | `scripts/bringup/talk_and_drive.py` |
 | Conversation | **Live** — general Q&A, fresh-frame visual follow-ups, five-exchange persistent text memory | [12-natural-conversation.md](docs/bringup/12-natural-conversation.md) |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
-| Memory | Stub only; local 127 MiB BGE ONNX candidate found, not loaded | CPU BGE vector round-trip in LanceDB |
+| Memory | **Live** — 32.5 MiB CPU INT8 BGE, LanceDB float16 vectors, explicit teach + restart recall passed | [09-memory.md](docs/bringup/09-memory.md) |
 
 Cosmos residency measured 2026-08-27: baseline **2487 / 7620 MB**, peak with the
 LLM + visual engines resident **5441 / 7620 MB**, so the Cosmos delta is

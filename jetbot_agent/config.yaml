@@ -55,8 +55,15 @@ audio:
     num_threads: 2
 
 memory:
-  chroma_path: data/memory/chroma
-  facts_db: data/memory/facts.db
+  backend: lancedb
+  uri: data/memory/lancedb
+  table: memory
+  embedder: data/models/bge-small-en-v1.5-onnx/bge-small-int8.onnx
+  provider: cpu
+  dimensions: 384
+  vector_dtype: float16
+  top_k: 4
+  max_rag_chars: 1400
 
 thresholds:
   cmd_vel_timeout_sec: 0.5

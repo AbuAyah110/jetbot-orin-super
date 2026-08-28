@@ -94,11 +94,34 @@ def test_runtime_error_fails_closed():
 
 
 def test_prompt_is_bounded_and_marks_history_as_data():
-    prompt = build_conversation_prompt(" hello   there ", "x" * 4000)
+    prompt = build_conversation_prompt(
+        " hello   there ",
+        "x" * 4000,
+        "[user_fact] My favorite color is blue." + "y" * 4000,
+    )
     assert "<history>" in prompt
     assert "</history>" in prompt
+    assert "<memory>" in prompt
+    assert "</memory>" in prompt
+    assert "My favorite color is blue." not in prompt  # newest bounded tail only
     assert "<utterance>hello there</utterance>" in prompt
-    assert len(prompt) < 2200
+    assert len(prompt) < 3100
+
+
+def test_retrieved_memory_is_passed_as_quoted_context():
+    runtime = FakeRuntime(
+        '{"action":"speak","vx":0,"wz":0,"duration_s":0,'
+        '"say":"Your favorite color is blue.","goal":"","reason":"conversation"}'
+    )
+    action, _ = conversation_action(
+        runtime,
+        'What is my favorite color?',
+        rag='[user_fact] My favorite color is blue.',
+    )
+
+    assert action.say == 'Your favorite color is blue.'
+    prompt = runtime.calls[0]['user_text']
+    assert '<memory>[user_fact] My favorite color is blue.</memory>' in prompt
 
 
 def test_visual_follow_up_uses_current_image_but_cannot_move():

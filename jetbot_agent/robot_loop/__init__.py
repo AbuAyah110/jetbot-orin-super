@@ -27,6 +27,7 @@ from jetbot_agent.robot_loop.intents import (
     is_search_request,
     is_visual_question,
     match_intent,
+    memory_fact,
     search_target,
 )
 from jetbot_agent.robot_loop.log_executor import LogOnlyExecutor
@@ -66,6 +67,7 @@ __all__ = [
     'is_search_request',
     'is_visual_question',
     'match_intent',
+    'memory_fact',
     'search_target',
     'parse_action',
     'parse_model_output',

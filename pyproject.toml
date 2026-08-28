@@ -16,6 +16,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
 vision = ["opencv-python-headless>=4.8", "Pillow>=10.0"]
+memory = [
+  "tokenizers==0.23.1",
+  "lancedb==0.37.1",
+  "onnxruntime==1.23.2",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

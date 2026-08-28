@@ -37,9 +37,11 @@ hidden, blurry, or uncertain.
 - “How many objects are there?”
 - “Move around the room and look for the blue object.”
 
-This is short conversational context, not the future LanceDB long-term memory.
-It does not provide internet access or knowledge of events newer than the
-model. Questions requiring unavailable hardware, tools, or current online
+Long-term facts use the separate CPU BGE + LanceDB path. Say “remember that…”
+to store a fact explicitly; general conversation is not silently promoted to
+long-term memory. Relevant top-k results are quoted into parked conversation
+only. This does not provide internet access or knowledge of events newer than
+the model. Questions requiring unavailable hardware, tools, or current online
 information should receive a brief limitation or clarification instead of a
 fabricated answer.
 

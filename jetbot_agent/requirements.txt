@@ -14,3 +14,6 @@ sherpa-onnx==1.13.6
 # model weights; BGE-small remains disabled until a local CPU ONNX is approved.
 tokenizers==0.23.1
 lancedb==0.37.1
+onnxruntime==1.23.2
+# Only needed to reproduce bge-small-int8.onnx from the local FP32 graph.
+onnx==1.22.0

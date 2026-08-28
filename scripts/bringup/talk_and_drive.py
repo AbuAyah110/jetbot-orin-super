@@ -96,7 +96,12 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     is_search_request,
     is_visual_question,
     match_intent,
+    memory_fact,
     search_target,
+)
+from jetbot_agent.robot_loop.memory_stubs import (  # noqa: E402
+    LanceMemory,
+    format_rag_context,
 )
 from jetbot_agent.robot_loop.cosmos_runtime import (  # noqa: E402
     COSMOS_ENGINE_DIR,
@@ -1065,6 +1070,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--no-pwm', action='store_true', help='Do not open jetbot.Robot (log PWM only).')
     parser.add_argument('--skip-cosmos', action='store_true', help='Fake Cosmos stop JSON (smoke).')
     parser.add_argument('--skip-asr', action='store_true')
+    parser.add_argument(
+        '--no-rag',
+        action='store_true',
+        help='Disable CPU BGE + LanceDB recall and explicit remember commands.',
+    )
     parser.add_argument('--skip-ready-tts', action='store_true')
     parser.add_argument(
         '--allow-speak-actions',
@@ -1127,12 +1137,14 @@ def main() -> int:
         args.no_camera = True
         args.skip_asr = True
         args.skip_ready_tts = True
+        args.no_rag = True
     if args.smoke_empty_asr:
         args.skip_cosmos = True
         args.no_pwm = True
         args.no_camera = True
         args.skip_ready_tts = True
         args.skip_asr = True
+        args.no_rag = True
         args.max_turns = 1
         args.auto_listen = False
     if (
@@ -1234,6 +1246,38 @@ def main() -> int:
             orch.history.save(CHAT_HISTORY_PATH)
         except OSError as exc:
             print('chat_history_save_failed', exc, file=sys.stderr, flush=True)
+
+    memory_store = None
+    if not args.no_rag:
+        try:
+            memory_store = LanceMemory()
+            print(
+                'rag_ready rows={0} provider=CPUExecutionProvider'.format(
+                    memory_store.count()
+                ),
+                flush=True,
+            )
+        except Exception as exc:
+            print('rag_unavailable', type(exc).__name__, exc, file=sys.stderr, flush=True)
+
+    def recall_context(query: str) -> str:
+        if memory_store is None:
+            return ''
+        try:
+            hits = memory_store.query(query, k=4)
+            context = format_rag_context(hits)
+            print(
+                'rag_recall hits={0} chars={1} ids={2}'.format(
+                    len(hits),
+                    len(context),
+                    [hit.get('id', '') for hit in hits],
+                ),
+                flush=True,
+            )
+            return context
+        except Exception as exc:
+            print('rag_recall_failed', type(exc).__name__, exc, file=sys.stderr, flush=True)
+            return ''
 
     camera: Optional[CsiJpeg448] = None
     camera_error = ''
@@ -1455,6 +1499,44 @@ def main() -> int:
                     break
                 continue
             consecutive_misses = 0
+
+            fact = memory_fact(speech)
+            if fact:
+                executor.hard_stop()
+                if memory_store is None:
+                    reply = "My long-term memory isn't available right now."
+                else:
+                    try:
+                        memory_store.upsert(
+                            [{'id': '', 'text': fact, 'kind': 'user_fact'}]
+                        )
+                        reply = "I'll remember that."
+                    except Exception as exc:
+                        print(
+                            'rag_remember_failed',
+                            type(exc).__name__,
+                            exc,
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        reply = "I couldn't save that memory."
+                record_turn(speech, reply)
+                print(
+                    json.dumps(
+                        {
+                            'route': 'remember',
+                            'fact': fact,
+                            'saved': reply == "I'll remember that.",
+                            'reply': reply,
+                        }
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(tts, reply, playback, wav_dir)
+                if args.once is not None:
+                    break
+                continue
 
             # Bounded room search: one fresh frame per viewpoint, short
             # in-place turns, and at most one short relocation after a separate
@@ -1714,6 +1796,7 @@ def main() -> int:
                         speech,
                         history_text(),
                         image_jpeg=jpeg,
+                        rag=recall_context(speech),
                     )
                 except Exception as exc:
                     print(
@@ -1975,6 +2058,7 @@ def main() -> int:
                 speech,
                 history_text(),
                 image_jpeg=None,
+                rag=recall_context(speech),
             )
             reply = action.say if action.kind == 'speak' else CONVERSATION_FALLBACK
             record_turn(speech, reply)

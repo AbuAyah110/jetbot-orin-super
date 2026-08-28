@@ -24,6 +24,7 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     is_search_request,
     is_visual_question,
     match_intent,
+    memory_fact,
     search_target,
 )
 
@@ -232,6 +233,23 @@ def test_bounded_room_search_extracts_target(transcript, target):
 def test_approach_is_not_mistaken_for_room_search():
     assert is_search_request('MOVE TOWARD THE BLUE OBJECT') is False
     assert is_search_request('TURN LEFT') is False
+
+
+@pytest.mark.parametrize(
+    'transcript,fact',
+    [
+        ('REMEMBER THAT MY NAME IS MOHAMMAD', 'my name is mohammad'),
+        ('PLEASE REMEMBER MY FAVORITE COLOR IS BLUE', 'my favorite color is blue'),
+        ("DON'T FORGET THAT THE KITCHEN IS TO THE LEFT", 'the kitchen is to the left'),
+    ],
+)
+def test_explicit_memory_commands_extract_fact(transcript, fact):
+    assert memory_fact(transcript) == fact
+
+
+def test_normal_conversation_is_not_saved_as_long_term_memory():
+    assert memory_fact('What is my favorite color?') == ''
+    assert memory_fact('Move forward') == ''
 
 
 @pytest.mark.parametrize(

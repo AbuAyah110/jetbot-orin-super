@@ -131,6 +131,11 @@ _SEARCH_PATTERN = re.compile(
     r')\s+(?:me\s+)?(?P<target>.+)$'
 )
 
+_REMEMBER_PATTERN = re.compile(
+    r"\b(?:remember(?:\s+that)?|(?:please\s+)?remember|"
+    r"don't\s+forget(?:\s+that)?)\s+(?P<fact>.+)$"
+)
+
 
 def normalize_transcript(text: str) -> str:
     """Lowercase and strip punctuation. ASR returns UPPERCASE with repeats."""
@@ -202,6 +207,15 @@ def search_target(text: str) -> str:
 def is_search_request(text: str) -> bool:
     """True for bounded camera search, distinct from approach movement."""
     return bool(search_target(text))
+
+
+def memory_fact(text: str) -> str:
+    """Extract an explicitly requested long-term fact."""
+    speech = normalize_transcript(text)
+    match = _REMEMBER_PATTERN.search(speech)
+    if match is None:
+        return ''
+    return match.group('fact')[:300].strip()
 
 
 def intent_wheels(intent: str) -> tuple[float, float]:

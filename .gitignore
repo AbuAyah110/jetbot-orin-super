@@ -45,6 +45,7 @@ build/
 !/data/logs/.gitkeep
 /data/memory/**
 !/data/memory/.gitkeep
+/data/runtime/**
 /data/maps/**
 !/data/maps/.gitkeep
 /data/benchmarks/**
