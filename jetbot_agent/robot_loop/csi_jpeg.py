@@ -12,19 +12,34 @@ CSI_JPEG_SIZE = 448
 # Sensor mode matches Stage C (IMX219 CAM0). Resize happens in NVMM before JPEG.
 _CAPTURE_WIDTH = 1280
 _CAPTURE_HEIGHT = 720
+# Argus auto-exposure starts dark and ramps. Measured indoors on CAM0: mean
+# luma 40 at first pull, 102 at ~1.7 s, steady 114 from ~2.7 s. Frames pulled
+# before that are roughly 3x underexposed, which is enough to turn a blue
+# object into a grey blob and make the VLM disagree with itself about which
+# side it is on. Discard frames until exposure settles.
+DEFAULT_WARMUP_S = 2.5
+_WARMUP_PULL_TIMEOUT_NS = 2_000_000_000
 
 
 class CsiJpeg448:
     """In-process GStreamer: Argus → nvvidconv 448² → nvjpegenc → appsink."""
 
-    def __init__(self, sensor_id: int = 0, fps: int = 15, num_buffers: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        sensor_id: int = 0,
+        fps: int = 15,
+        num_buffers: Optional[int] = None,
+        warmup_s: float = DEFAULT_WARMUP_S,
+    ) -> None:
         self.sensor_id = int(sensor_id)
         self.fps = int(fps)
         self.num_buffers = num_buffers
+        self.warmup_s = float(warmup_s)
         self.width = CSI_JPEG_SIZE
         self.height = CSI_JPEG_SIZE
         self._pipeline = None
         self._appsink = None
+        self.warmup_frames_dropped = 0
 
     def gst_pipeline(self) -> str:
         """Single pipeline string. One nvarguscamerasrc, one nvjpegenc."""
@@ -73,6 +88,29 @@ class CsiJpeg448:
             raise RuntimeError('Failed to start CSI JPEG pipeline: {0}'.format(pipeline_str))
         self._pipeline = pipeline
         self._appsink = sink
+        self._drain_warmup()
+
+    def _drain_warmup(self, now=None) -> int:
+        """Discard frames until Argus auto-exposure has settled.
+
+        One-time cost per pipeline. A ``num_buffers`` capture cannot afford it,
+        so a bounded one-shot keeps its single frame.
+        """
+        if self.warmup_s <= 0 or self._appsink is None:
+            return 0
+        if self.num_buffers is not None and int(self.num_buffers) > 0:
+            return 0
+        import time as _time
+
+        clock = now or _time.monotonic
+        deadline = clock() + self.warmup_s
+        dropped = 0
+        while clock() < deadline:
+            if self._appsink.emit('try-pull-sample', _WARMUP_PULL_TIMEOUT_NS) is None:
+                break
+            dropped += 1
+        self.warmup_frames_dropped = dropped
+        return dropped
 
     def capture_jpeg(self, timeout_ns: int = 5_000_000_000) -> bytes:
         """Pull one JPEG. Starts the single pipeline on first call."""

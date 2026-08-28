@@ -40,6 +40,48 @@ def test_pipeline_is_one_csi_448():
     assert oneshot.count('nvarguscamerasrc') == 1
 
 
+class FakeAppsink:
+    """Stands in for the GStreamer appsink so warm-up is testable off-robot."""
+
+    def __init__(self, available=1000):
+        self.available = available
+        self.pulls = 0
+
+    def emit(self, _signal, _timeout_ns):
+        self.pulls += 1
+        if self.pulls > self.available:
+            return None
+        return object()
+
+
+def test_warmup_discards_frames_until_exposure_settles():
+    """Argus opens ~3x underexposed; early frames must not reach the VLM."""
+    camera = CsiJpeg448(warmup_s=2.5)
+    camera._appsink = FakeAppsink()
+    ticks = iter([0.0] + [i * 0.1 for i in range(1, 100)])
+    clock = lambda: next(ticks)  # noqa: E731
+
+    dropped = camera._drain_warmup(now=clock)
+
+    assert dropped > 0
+    assert camera.warmup_frames_dropped == dropped
+
+
+def test_oneshot_capture_keeps_its_only_frame():
+    camera = CsiJpeg448(num_buffers=1, warmup_s=2.5)
+    camera._appsink = FakeAppsink()
+
+    assert camera._drain_warmup() == 0
+    assert camera._appsink.pulls == 0
+
+
+def test_warmup_stops_early_when_the_sensor_stalls():
+    camera = CsiJpeg448(warmup_s=2.5)
+    camera._appsink = FakeAppsink(available=3)
+
+    assert camera._drain_warmup() == 3
+
+
 def test_log_executor_never_moves():
     exe = LogOnlyExecutor()
     exe.execute(parse_action('{"action":"drive","vx":0.2,"wz":0.5}'))
