@@ -330,13 +330,38 @@ def _solid_jpeg(rgb, size=64, patch=None):
     return buffer.getvalue()
 
 
-def test_corridor_is_clear_when_the_colour_is_absent():
+def test_corridor_fails_closed_when_the_target_is_no_longer_visible():
+    # Measured: one 0.35 s pulse swung a centred truck out of frame, the old
+    # rule read that as a clear path, and the robot drove forward blind.
     jpeg = _solid_jpeg((90, 90, 90))
 
     clear, evidence = color_corridor_clear(jpeg, 'red object')
 
-    assert clear is True
     assert evidence['visible'] is False
+    assert clear is False
+
+
+def test_corridor_rejects_an_edge_artefact_smaller_than_the_tracked_target():
+    # A few hundred pixels of reddish door frame at the edge previously passed
+    # as the truck and hid the lost track.
+    jpeg = _solid_jpeg((40, 40, 40), patch=((46, 20, 16, 20), (255, 20, 20)))
+
+    clear, evidence = color_corridor_clear(jpeg, 'red object', min_pixels=8000)
+
+    # Big enough for locate_color to call it visible, far too small to be the
+    # target that was being tracked.
+    assert evidence['visible'] is True
+    assert evidence['rejected'] == 'lost_track'
+    assert clear is False
+
+
+def test_corridor_accepts_the_tracked_target_once_it_is_off_to_one_side():
+    jpeg = _solid_jpeg((40, 40, 40), patch=((2, 16, 18, 28), (255, 20, 20)))
+
+    clear, evidence = color_corridor_clear(jpeg, 'red object', min_pixels=100)
+
+    assert evidence['side'] == 'left'
+    assert clear is True
 
 
 def test_corridor_is_blocked_while_the_target_sits_dead_ahead():

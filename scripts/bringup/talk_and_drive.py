@@ -574,27 +574,39 @@ def opposite_side(side: str) -> str:
     return 'right' if side == 'left' else 'left'
 
 
-# A rejection that means "the colour filled the frame" cannot be read as "the
-# object is gone": that is exactly what a target at point-blank range looks
-# like. Only a genuine absence of matching pixels clears the corridor.
-_CORRIDOR_BLOCKERS = frozenset(
-    {'covers_too_much_of_frame', 'decode_failed', 'unsupported_target'}
-)
+# A target the robot can no longer see is not a clear path, it is a lost track.
+# Measured: one 0.35 s turn pulse swung a centred truck fully out of frame, the
+# corridor read "clear", and the robot drove forward twice with no idea where
+# the truck was. Only a target that stays visible and off-centre clears.
+CORRIDOR_PIXEL_RETENTION = 0.30
 
 
-def color_corridor_clear(jpeg: bytes, target: str) -> tuple[bool, dict]:
-    """True when the named coloured target is out of the forward corridor.
+def color_corridor_clear(
+    jpeg: bytes,
+    target: str,
+    min_pixels: int = 0,
+) -> tuple[bool, dict]:
+    """True only while the named target is still tracked and out of the path.
 
     Deterministic pixel arithmetic, unlike :func:`camera_path_clear`. It knows
     only about the named target and cannot see any other obstacle, which is why
     the detour built on it stays short.
+
+    ``min_pixels`` carries the size of the first detection forward. Without it a
+    few hundred pixels of reddish door frame at the frame edge reads as the red
+    truck and hides the fact that the truck is gone.
     """
     evidence = locate_color(jpeg, target)
-    if evidence.rejected in _CORRIDOR_BLOCKERS:
-        return False, evidence.as_dict()
-    if evidence.visible and evidence.side == 'center':
-        return False, evidence.as_dict()
-    return True, evidence.as_dict()
+    detail = evidence.as_dict()
+    detail['min_pixels'] = min_pixels
+    if not evidence.visible:
+        # Covers both a lost track and a target so close its colour fills the
+        # frame, which locate_color rejects as covering too much.
+        return False, detail
+    if evidence.pixels < min_pixels:
+        detail['rejected'] = 'lost_track'
+        return False, detail
+    return evidence.side != 'center', detail
 
 
 def recover_cosmos_fields(action: RobotAction, model_text: str) -> RobotAction:
@@ -1976,6 +1988,9 @@ def main() -> int:
                 target_side = ''
                 evidence: dict = {}
 
+                track_floor = 0
+                corridor_last: dict = {}
+
                 def corridor_now(phase: str) -> bool:
                     """Settled fresh frame, then deterministic pixel evidence.
 
@@ -1985,7 +2000,11 @@ def main() -> int:
                     """
                     camera.settle()
                     leg_jpeg, _ = capture_current_frame(speech, phase)
-                    clear, detail = color_corridor_clear(leg_jpeg, target)
+                    clear, detail = color_corridor_clear(
+                        leg_jpeg, target, min_pixels=track_floor
+                    )
+                    corridor_last.clear()
+                    corridor_last.update(detail)
                     print('around_corridor', json.dumps(detail), flush=True)
                     return clear
 
@@ -2006,6 +2025,9 @@ def main() -> int:
                             abort_reason = 'target_not_located'
                         else:
                             target_side = located.side
+                            track_floor = int(
+                                located.pixels * CORRIDOR_PIXEL_RETENTION
+                            )
                             detour = detour_side_for(target_side)
                             briefing = (
                                 'Going around the {0} on my {1}. Short pulses, '
@@ -2072,14 +2094,23 @@ def main() -> int:
                     reply = "I can't see the {0}, so I won't try to go around it.".format(
                         target
                     )
-                elif abort_reason == 'never_cleared':
-                    reply = (
-                        'I turned but the {0} stayed in my path, so I stopped.'
-                    ).format(target)
-                elif abort_reason == 'target_back_in_path':
-                    reply = 'The {0} came back into my path, so I stopped.'.format(
-                        target
-                    )
+                elif abort_reason in {'never_cleared', 'target_back_in_path'}:
+                    # Losing the track and being blocked are different failures
+                    # and must not share a reply: one means "it is still in
+                    # front of me", the other means "I have no idea where it is".
+                    if not corridor_last.get('visible'):
+                        reply = (
+                            'I lost sight of the {0}, so I stopped rather than '
+                            'drive blind.'
+                        ).format(target)
+                    elif abort_reason == 'never_cleared':
+                        reply = (
+                            'I turned but the {0} stayed in my path, so I stopped.'
+                        ).format(target)
+                    else:
+                        reply = 'The {0} came back into my path, so I stopped.'.format(
+                            target
+                        )
                 elif abort_reason:
                     reply = 'I stopped the detour early and parked.'
                 else:
