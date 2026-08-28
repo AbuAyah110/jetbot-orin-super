@@ -23,6 +23,7 @@ from talk_and_drive import (  # noqa: E402
     _target_phrase,
     asr_transcript_usable,
     collapse_repeats,
+    pcm16_rms,
     speak_understand_fail,
     calibrate_cosmos_action,
     clamp_test_action,
@@ -265,3 +266,11 @@ def test_rms_floor_separates_measured_speech_from_measured_silence():
         assert silent < SPEECH_RMS_FLOOR_FS
     for spoken in (0.0081, 0.0210, 0.0411):
         assert spoken >= SPEECH_RMS_FLOOR_FS
+
+
+def test_pcm16_rms_matches_known_amplitude():
+    import array
+
+    frame = array.array('h', [3276, -3276] * 160).tobytes()
+    assert pcm16_rms(frame) == pytest.approx(0.10, abs=0.001)
+    assert pcm16_rms(b'') == 0.0

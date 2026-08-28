@@ -14,7 +14,8 @@ Safety for this first live test:
   ALSA: SSS1629 Mic playback/sidetone OFF, Speaker 75%.
   Never cat the old Cosmos FIFO; engines load via cosmos_resident.
 
-Default live UX: --auto-listen records ~4 s in a cycle (no Enter).
+Default live UX: --auto-listen waits silently for speech and ends after a
+short pause (no Enter or cue beep).
 SIGTERM / Ctrl-C stops motors and exits. Ready TTS, then listen.
 """
 
@@ -32,6 +33,7 @@ import subprocess
 import sys
 import time
 import wave
+from collections import deque
 from dataclasses import replace
 from pathlib import Path
 from typing import Optional
@@ -109,9 +111,8 @@ DESCRIBE_MAX_TOKENS = 96
 TEST_DURATION_MAX_S = LIVE_DURATION_MAX_S
 READY_PHRASE = "I'm ready for your command"
 UNDERSTAND_FAIL_PHRASE = "I was unable to understand what you said."
-# Silence and an unintelligible sentence need different advice: move closer
-# versus wait for the beep.
-SILENCE_FAIL_PHRASE = "I did not hear anything. Please speak after the beep."
+# Silence and an unintelligible sentence need different advice.
+SILENCE_FAIL_PHRASE = "I did not hear anything. Please try again."
 # Cosmos handles open-ended speech; the user still gets a word back, never silence.
 COSMOS_ACK_PHRASE = 'Okay'
 VISION_UNAVAILABLE_PHRASE = "I can't see right now"
@@ -129,6 +130,10 @@ SPEECH_PEAK_FLOOR_FS = 0.04
 # captures, silent rooms still peaked at 0.045 while spoken commands sat at
 # 0.008-0.041 RMS against a 0.0025-0.0034 RMS floor. RMS is the reliable test.
 SPEECH_RMS_FLOOR_FS = 0.006
+VAD_FRAME_MS = 20
+VAD_PREROLL_S = 0.30
+VAD_END_SILENCE_S = 0.65
+VAD_START_FRAMES = 3
 # Let the USB playback stream drain so capture never records the cue tail.
 PLAYBACK_SETTLE_S = 0.25
 DEBUG_AUDIO_DIR = REPO / 'data' / 'audio' / 'debug'
@@ -800,6 +805,115 @@ def capture_mic_wav(seconds: int, capture_dev: str, dest: Path) -> Path:
     return dest
 
 
+def pcm16_rms(raw: bytes) -> float:
+    """Return full-scale RMS for one little-endian signed 16-bit PCM frame."""
+    if not raw:
+        return 0.0
+    samples = array.array('h')
+    samples.frombytes(raw)
+    if sys.byteorder != 'little':
+        samples.byteswap()
+    if not samples:
+        return 0.0
+    return math.sqrt(
+        sum(float(sample) * float(sample) for sample in samples) / len(samples)
+    ) / 32768.0
+
+
+def capture_vad_wav(
+    capture_dev: str,
+    dest: Path,
+    *,
+    max_s: float = MIC_SECONDS,
+    speech_rms: float = SPEECH_RMS_FLOOR_FS,
+    end_silence_s: float = VAD_END_SILENCE_S,
+    preroll_s: float = VAD_PREROLL_S,
+    should_stop=None,
+) -> Path:
+    """Wait silently for speech, then save one endpointed utterance.
+
+    Three active 20 ms frames within the recent five start an utterance. About
+    650 ms below the measured speech floor ends it. A 300 ms ring preserves
+    initial consonants.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['pkill', '-x', 'arecord'], check=False, capture_output=True)
+    rate = 16000
+    frame_samples = rate * VAD_FRAME_MS // 1000
+    frame_bytes = frame_samples * 2
+    preroll_frames = max(1, int(round(preroll_s * 1000.0 / VAD_FRAME_MS)))
+    end_frames = max(1, int(round(end_silence_s * 1000.0 / VAD_FRAME_MS)))
+    max_frames = max(1, int(round(float(max_s) * 1000.0 / VAD_FRAME_MS)))
+    before = deque(maxlen=preroll_frames)
+    recent_active = deque(maxlen=5)
+    utterance: list[bytes] = []
+    started = False
+    silent_frames = 0
+    proc = subprocess.Popen(
+        [
+            'arecord', '-q', '-D', capture_dev, '-t', 'raw',
+            '-f', 'S16_LE', '-r', str(rate), '-c', '1',
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        if proc.stdout is None:
+            raise RuntimeError('arecord_stdout_unavailable')
+        print(
+            '{0} mic_waiting dev={1} — speak naturally'.format(stamp(), capture_dev),
+            flush=True,
+        )
+        while True:
+            if should_stop is not None and should_stop():
+                break
+            raw = proc.stdout.read(frame_bytes)
+            if len(raw) != frame_bytes:
+                if proc.poll() is not None:
+                    detail = ''
+                    if proc.stderr is not None:
+                        detail = proc.stderr.read().decode(
+                            'utf-8', errors='replace'
+                        ).strip()
+                    raise RuntimeError(
+                        'arecord_failed rc={0} {1}'.format(proc.returncode, detail)
+                    )
+                continue
+            active = pcm16_rms(raw) >= float(speech_rms)
+            if not started:
+                before.append(raw)
+                recent_active.append(active)
+                if sum(recent_active) >= VAD_START_FRAMES:
+                    started = True
+                    utterance.extend(before)
+                    print('{0} speech_started'.format(stamp()), flush=True)
+                continue
+            utterance.append(raw)
+            silent_frames = 0 if active else silent_frames + 1
+            if silent_frames >= end_frames or len(utterance) >= max_frames:
+                break
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=1.0)
+    with wave.open(str(dest), 'wb') as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(rate)
+        handle.writeframes(b''.join(utterance))
+    print(
+        '{0} speech_ended duration_s={1:.2f}'.format(
+            stamp(), len(utterance) * VAD_FRAME_MS / 1000.0
+        ),
+        flush=True,
+    )
+    return dest
+
+
 def read_wav_mono(path: Path) -> tuple[list[float], int]:
     with wave.open(str(path), 'rb') as handle:
         rate = handle.getframerate()
@@ -904,7 +1018,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--auto-listen',
         action='store_true',
-        help='Record mic in a loop (no Enter). Implied when stdin is not a TTY.',
+        help='Wait for endpointed speech in a loop (no Enter or beep). Implied when stdin is not a TTY.',
+    )
+    parser.add_argument(
+        '--timed-listen',
+        action='store_true',
+        help='Legacy beep plus fixed --mic-seconds recording instead of speech endpointing.',
     )
     parser.add_argument(
         '--listen-prompt',
@@ -1086,7 +1205,7 @@ def main() -> int:
     )
     if args.auto_listen:
         print(
-            'auto-listen {0}s. Speak after you hear ready or Listening. Wheels may move. SIGTERM/Ctrl-C stops.'.format(
+            'auto-listen VAD max_utterance={0}s. Speak naturally after ready; no beep. Wheels may move. SIGTERM/Ctrl-C stops.'.format(
                 args.mic_seconds
             ),
             flush=True,
@@ -1104,8 +1223,20 @@ def main() -> int:
     last_rms = 0.0
 
     def cue_then_capture(cap_path: Path) -> None:
-        """Beep, drain playback, then open the mic. Cue must not be recorded."""
+        """Capture one command, endpointed by default or timed when requested."""
         apply_alsa_safety()
+        if not args.timed_listen:
+            # aplay can return just before the USB codec finishes draining.
+            # Without an AEC far-end reference, opening immediately causes the
+            # robot's final syllable to start a false utterance.
+            time.sleep(PLAYBACK_SETTLE_S)
+            capture_vad_wav(
+                capture_dev,
+                cap_path,
+                max_s=args.mic_seconds,
+                should_stop=lambda: stop_requested,
+            )
+            return
         play_wav_once(beep_wav, playback)
         time.sleep(PLAYBACK_SETTLE_S)
         print(
@@ -1139,7 +1270,7 @@ def main() -> int:
                 rate,
                 dbfs(peak),
                 dbfs(rms),
-                peak >= SPEECH_PEAK_FLOOR_FS,
+                rms >= SPEECH_RMS_FLOOR_FS,
                 kept or '(not kept)',
             ),
             flush=True,
