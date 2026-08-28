@@ -19,12 +19,16 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     ack_phrase,
     intent_action,
     intent_wheels,
+    is_describe_request,
+    is_plan_preview_request,
     match_intent,
 )
 
 from talk_and_drive import (  # noqa: E402
+    DESCRIBE_SPEAK_MAX_CHARS,
     SPEAK_PLAY_MAX_CHARS,
     clamp_test_action,
+    clean_description,
     unicycle_wheels,
 )
 
@@ -143,6 +147,77 @@ def test_nudges_survive_the_live_loop_clamp():
         assert abs(right) == pytest.approx(NUDGE_VX)
     forward = clamp_test_action(intent_action('forward'))
     assert forward.vx == pytest.approx(NUDGE_VX)
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        'WHAT DO YOU SEE',
+        'what do you see?',
+        'WHAT ARE YOU LOOKING AT',
+        'TELL ME WHAT YOU SEE',
+        'DESCRIBE WHAT YOU SEE',
+        "WHAT'S IN FRONT OF YOU",
+        'DO YOU SEE ANYTHING',
+        'LOOK AROUND',
+    ],
+)
+def test_describe_questions_are_recognized(transcript):
+    assert is_describe_request(transcript) is True
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    ['', 'MOVE FORWARD', 'TURN LEFT', 'STOP', 'MOVE TOWARD THE RED OBJECT'],
+)
+def test_commands_are_not_describe_requests(transcript):
+    assert is_describe_request(transcript) is False
+
+
+def test_describe_question_never_becomes_a_motion_intent():
+    # A direction word inside the question must not reach the wheels.
+    for transcript in ('WHAT DO YOU SEE ON THE LEFT', 'WHAT DO YOU SEE AHEAD'):
+        assert is_describe_request(transcript) is True
+        assert match_intent(transcript) is None
+
+
+def test_clean_description_strips_think_blocks_and_json():
+    assert clean_description('<think>hmm</think> A red ball is on my left.') == (
+        'A red ball is on my left.'
+    )
+    assert clean_description('{"description": "A blue box ahead."}') == 'A blue box ahead.'
+    assert clean_description('```json\n{"say": "Nothing but floor."}\n```') == (
+        'Nothing but floor.'
+    )
+    assert clean_description('   ') == ''
+
+
+def test_description_cap_allows_a_full_sentence():
+    assert DESCRIBE_SPEAK_MAX_CHARS > SPEAK_PLAY_MAX_CHARS
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        "WHAT'S YOUR PLAN TO MOVE TOWARD THE RED OBJECT",
+        'WHAT IS YOUR PLAN TO GET TO THE BLUE OBJECT',
+        'WHAT WOULD YOU DO TO APPROACH THE CHAIR',
+        'HOW WOULD YOU MOVE TOWARD THE BOX',
+        'DESCRIBE YOUR PLAN TO REACH THE DOOR',
+        'PLAN HOW TO APPROACH THE PERSON',
+    ],
+)
+def test_plan_preview_questions_are_recognized(transcript):
+    assert is_plan_preview_request(transcript) is True
+    assert match_intent(transcript) is None
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    ['', 'MOVE FORWARD', 'MOVE TOWARD THE RED OBJECT', 'WHAT DO YOU SEE'],
+)
+def test_execution_and_description_are_not_plan_previews(transcript):
+    assert is_plan_preview_request(transcript) is False
 
 
 def test_ack_phrases_are_short_enough_to_speak():

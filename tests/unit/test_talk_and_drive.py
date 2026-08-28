@@ -18,12 +18,72 @@ from talk_and_drive import (  # noqa: E402
     TEST_DURATION_MAX_S,
     UNDERSTAND_FAIL_PHRASE,
     TalkDriveExecutor,
+    _target_phrase,
     asr_transcript_usable,
     calibrate_cosmos_action,
     clamp_test_action,
     ground_visual_target,
+    plan_visual_approach,
     unicycle_wheels,
+    verify_visual_target,
 )
+
+
+@pytest.mark.parametrize(
+    'speech, expected',
+    [
+        ('MOVE TOWARD THE RED OBJECT', 'THE RED OBJECT'),
+        ('WHAT IS YOUR PLAN TO MOVE TOWARD THE RED OBJECT', 'THE RED OBJECT'),
+        ('WHAT WOULD YOU DO TO GO TO THE BLUE OBJECT', 'THE BLUE OBJECT'),
+    ],
+)
+def test_target_phrase_uses_final_navigation_preposition(speech, expected):
+    assert _target_phrase(speech) == expected
+
+
+def test_color_grounding_repairs_malformed_cosmos_plan():
+    import io
+    from PIL import Image, ImageDraw
+
+    image = Image.new('RGB', (448, 448), (20, 20, 20))
+    ImageDraw.Draw(image).rectangle((330, 100, 430, 350), fill='blue')
+    stream = io.BytesIO()
+    image.save(stream, format='JPEG', quality=95)
+
+    class BadRuntime:
+        def generate(self, **_kwargs):
+            return '{"visible":true,"side":"left","goal":"BLUE OBJECT",' \
+                   '"plan":[{"step":"STEP","ticks":1}]}'
+
+    plan, raw = plan_visual_approach(
+        BadRuntime(), stream.getvalue(), 'MOVE TOWARD THE BLUE OBJECT'
+    )
+    assert plan.raw_ok is True
+    assert plan.visible is True
+    assert plan.side == 'right'
+    assert plan.steps[0].step == 'arc_right'
+    assert 'COLOR_GROUNDING' in raw
+
+
+def test_color_grounding_corrects_relook_side():
+    import io
+    from PIL import Image, ImageDraw
+
+    image = Image.new('RGB', (448, 448), (20, 20, 20))
+    ImageDraw.Draw(image).rectangle((330, 100, 430, 350), fill='blue')
+    stream = io.BytesIO()
+    image.save(stream, format='JPEG', quality=95)
+
+    class WrongSideRuntime:
+        def generate(self, **_kwargs):
+            return '{"visible":true,"side":"left"}'
+
+    safe, side, raw = verify_visual_target(
+        WrongSideRuntime(), stream.getvalue(), 'BLUE OBJECT', 'right'
+    )
+    assert safe is True
+    assert side == 'right'
+    assert 'COLOR_GROUNDING' in raw
 
 
 def test_test_clamp_caps_duration_to_half_second():

@@ -72,6 +72,33 @@ _INTENT_PATTERNS = (
     (RIGHT, re.compile(r'(?:(?:turn|go|move|drive)\s+)?right')),
 )
 
+# "What do you see" is answered from the current frame with speech only. It is
+# matched before the motion patterns so a phrasing like "what do you see on the
+# left" describes the scene instead of spinning the chassis.
+_DESCRIBE_PATTERN = re.compile(
+    r'\b(?:'
+    r'what(?:\s+do|\s+can|\s+are)?\s+you\s+(?:see|seeing|look(?:ing)?\s+at)'
+    r"|what(?:'s|s|\s+is)\s+(?:in\s+front|there|around|ahead)"
+    r'|(?:tell|show)\s+me\s+what\s+you\s+(?:see|can\s+see)'
+    r'|describe\s+(?:what\s+you\s+see|the\s+\w+|your\s+\w+)'
+    r'|look\s+around'
+    r'|do\s+you\s+see\s+anything'
+    r')\b'
+)
+
+# Plan-preview questions are a parked, no-motion debugging route. Keep this
+# separate from object-relative execution so "what would you do..." cannot
+# accidentally start the motors.
+_PLAN_PREVIEW_PATTERN = re.compile(
+    r'\b(?:'
+    r"what(?:'s|\s+is|s|\s+would\s+be)\s+your\s+plan"
+    r'|what\s+would\s+you\s+do'
+    r'|how\s+would\s+you\s+(?:move|go|drive|approach|get)'
+    r'|describe\s+your\s+plan'
+    r'|plan\s+(?:how|to)\s+'
+    r')\b'
+)
+
 
 def normalize_transcript(text: str) -> str:
     """Lowercase and strip punctuation. ASR returns UPPERCASE with repeats."""
@@ -96,6 +123,26 @@ def match_intent(text: str) -> Optional[str]:
         if repeated.fullmatch(speech):
             return intent
     return None
+
+
+def is_describe_request(text: str) -> bool:
+    """True when the speaker asked what the robot currently sees.
+
+    Answered with a fresh frame and speech only: this route never drives, so a
+    stray direction word inside the question cannot reach the motors.
+    """
+    speech = normalize_transcript(text)
+    if not speech:
+        return False
+    return bool(_DESCRIBE_PATTERN.search(speech))
+
+
+def is_plan_preview_request(text: str) -> bool:
+    """True for requests to inspect a prospective plan without executing it."""
+    speech = normalize_transcript(text)
+    if not speech:
+        return False
+    return bool(_PLAN_PREVIEW_PATTERN.search(speech))
 
 
 def intent_wheels(intent: str) -> tuple[float, float]:

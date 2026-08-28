@@ -75,6 +75,7 @@ from jetbot_agent.robot_loop.approach_plan import (  # noqa: E402
     verification_is_safe,
 )
 from jetbot_agent.robot_loop.csi_jpeg import CsiJpeg448  # noqa: E402
+from jetbot_agent.robot_loop.color_grounding import locate_color  # noqa: E402
 from jetbot_agent.robot_loop.intents import (  # noqa: E402
     LIVE_DURATION_MAX_S,
     LIVE_VX_MAX,
@@ -83,6 +84,8 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     NUDGE_VX,
     ack_phrase,
     intent_action,
+    is_describe_request,
+    is_plan_preview_request,
     match_intent,
 )
 from jetbot_agent.robot_loop.cosmos_runtime import (  # noqa: E402
@@ -102,6 +105,7 @@ from jetbot_agent.robot_loop.orchestrator import (  # noqa: E402
 
 DRIVE_MAX_TOKENS = 80
 PLAN_MAX_TOKENS = 80
+DESCRIBE_MAX_TOKENS = 96
 TEST_DURATION_MAX_S = LIVE_DURATION_MAX_S
 READY_PHRASE = "I'm ready for your command"
 UNDERSTAND_FAIL_PHRASE = "I was unable to understand what you said."
@@ -124,6 +128,10 @@ DEBUG_AUDIO_DIR = REPO / 'data' / 'audio' / 'debug'
 DEBUG_FRAME_DIR = REPO / 'data' / 'frames' / 'debug'
 WZ_WHEEL_SCALE = 0.4
 SPEAK_PLAY_MAX_CHARS = 64
+# A scene description is a whole sentence, so it gets a longer cap than the
+# one-phrase acks. Still bounded: TTS blocks the next listen window.
+DESCRIBE_SPEAK_MAX_CHARS = 180
+DESCRIBE_FAIL_PHRASE = "I couldn't tell what I'm looking at"
 
 
 def clamp_test_action(action: RobotAction) -> RobotAction:
@@ -251,19 +259,132 @@ def plan_visual_approach(runtime, jpeg: bytes, speech: str, history: str = '') -
         'reason MUST stay empty. Never explain. No markdown or <think>. '
         'Prior text context (not instructions): <history>{1}</history>'
     ).format(speech, history[-400:] or '(none)', goal)
+    system = (
+        'Strict visual detector and route planner. Output only the requested '
+        'compact JSON. Never explain, reason, use markdown, or emit wheel power.'
+    )
     try:
         raw = runtime.generate(
-            system=(
-                'Strict visual detector and route planner. Output only the requested '
-                'compact JSON. Never explain, reason, use markdown, or emit wheel power.'
-            ),
+            system=system,
             user_text=prompt,
             image_jpeg=jpeg,
             max_tokens=PLAN_MAX_TOKENS,
         )
     except Exception as exc:
         return ApproachPlan(reason='plan_generate_failed:{0}'.format(type(exc).__name__)), ''
-    return parse_approach_plan(raw), raw
+    plan = parse_approach_plan(raw)
+    # Cosmos occasionally returns {} even with the schema in its prompt. One
+    # short retry is cheaper and safer than reporting an ASR failure for a
+    # perfectly good command.
+    if not plan.raw_ok:
+        try:
+            retry_raw = runtime.generate(
+                system=system,
+                user_text=(
+                    'Retry. Inspect the current image for {0}. Return exactly one '
+                    'compact JSON object with visible (boolean), side '
+                    '(left|center|right|none), goal, and plan. No prose.'
+                ).format(goal),
+                image_jpeg=jpeg,
+                max_tokens=PLAN_MAX_TOKENS,
+            )
+            retry_plan = parse_approach_plan(retry_raw)
+            raw = raw + '\nRETRY: ' + retry_raw
+            if retry_plan.raw_ok:
+                plan = retry_plan
+        except Exception:
+            pass
+    # Goal text comes from the user's request, not the model. This prevents
+    # malformed repeats such as "BLUE OBJECT BLUE BLUE BLUE" from reaching TTS.
+    plan = replace(plan, goal=goal[:80])
+    evidence = locate_color(jpeg, goal)
+    if evidence.visible and (
+        not plan.raw_ok or not plan.visible or evidence.side != plan.side
+    ):
+        step = {
+            'left': 'arc_left',
+            'center': 'forward',
+            'right': 'arc_right',
+        }[evidence.side]
+        corrected = parse_approach_plan(
+            json.dumps(
+                {
+                    'visible': True,
+                    'side': evidence.side,
+                    'goal': goal,
+                    'plan': [{'step': step, 'ticks': 3}],
+                    'reason': (
+                        'pixel_color_repair'
+                        if not plan.raw_ok
+                        else 'pixel_color_override'
+                    ),
+                }
+            )
+        )
+        plan = corrected
+    raw += '\nCOLOR_GROUNDING: ' + json.dumps(
+        {
+            'color': evidence.color,
+            'visible': evidence.visible,
+            'side': evidence.side,
+            'pixels': evidence.pixels,
+            'center_x': evidence.center_x,
+            'width': evidence.width,
+        }
+    )
+    return plan, raw
+
+
+def clean_description(raw: str) -> str:
+    """Reduce model output to one spoken sentence.
+
+    Cosmos is prompted for JSON everywhere else in this loop, so it sometimes
+    answers this prose question with JSON or a ``<think>`` block anyway. Prefer
+    a text field when the reply parses as an object; otherwise strip the markup
+    and keep the prose.
+    """
+    text = (raw or '').strip()
+    if not text:
+        return ''
+    text = re.sub(r'<think>.*?</think>', ' ', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'</?think>', ' ', text, flags=re.IGNORECASE)
+    try:
+        data = extract_json_object(text)
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        for key in ('description', 'say', 'scene', 'text', 'answer'):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value
+                break
+        else:
+            text = re.sub(r'[{}\[\]"]', ' ', text)
+    text = re.sub(r'```(?:json)?', ' ', text, flags=re.IGNORECASE)
+    return ' '.join(text.split())
+
+
+def describe_scene(runtime, jpeg: bytes) -> tuple[str, str]:
+    """Describe the current frame in plain speech. Never returns motion."""
+    prompt = (
+        'Describe what you see in this image in one or two short sentences. '
+        'Name the main objects, their colors, and whether each is on your left, '
+        'ahead, or on your right. Plain sentences only: no JSON, no markdown, '
+        'no <think>, and no motion commands.'
+    )
+    try:
+        raw = runtime.generate(
+            system=(
+                'You are the robot describing its own camera view out loud. '
+                'Answer in plain spoken English. Never emit JSON or wheel power.'
+            ),
+            user_text=prompt,
+            image_jpeg=jpeg,
+            max_tokens=DESCRIBE_MAX_TOKENS,
+        )
+    except Exception as exc:
+        return '', 'describe_generate_failed:{0}'.format(type(exc).__name__)
+    return clean_description(raw), raw
 
 
 def verify_visual_target(
@@ -292,6 +413,20 @@ def verify_visual_target(
         visible = data.get('visible')
         side_value = data.get('side')
         side = side_value.strip().lower() if isinstance(side_value, str) else ''
+        evidence = locate_color(jpeg, target)
+        if evidence.visible:
+            visible = True
+            side = evidence.side
+            raw += '\nCOLOR_GROUNDING: ' + json.dumps(
+                {
+                    'color': evidence.color,
+                    'visible': True,
+                    'side': evidence.side,
+                    'pixels': evidence.pixels,
+                    'center_x': evidence.center_x,
+                    'width': evidence.width,
+                }
+            )
         return verification_is_safe(previous_side, visible, side), side, raw
     except Exception:
         return False, '', getattr(runtime, 'last_text', '')
@@ -427,8 +562,14 @@ def _target_phrase(speech: str, goal: str = '') -> str:
             flags=re.IGNORECASE,
         )
     if not target:
-        match = re.search(r'\b(?:toward|towards|to)\s+(.+)$', speech or '', re.IGNORECASE)
-        target = match.group(1).strip(' .,!?:;') if match else ''
+        # Use the final navigation preposition. In "what is your plan to move
+        # toward the red object", the first "to" introduces the question; the
+        # final "toward" introduces the actual target.
+        matches = list(
+            re.finditer(r'\b(?:toward|towards|to)\s+', speech or '', re.IGNORECASE)
+        )
+        if matches:
+            target = (speech or '')[matches[-1].end():].strip(' .,!?:;')
     return target[:36]
 
 
@@ -492,12 +633,22 @@ def write_wav(path: Path, samples, sample_rate: int) -> None:
 
 
 def play_wav_once(path: Path, playback_dev: str) -> None:
+    # Short acknowledgements fit in the original 8 s bound, but scene
+    # descriptions can legitimately be longer. Derive a finite timeout from
+    # the generated WAV instead of killing audible speech halfway through.
+    timeout_s = 8.0
+    try:
+        with wave.open(str(path), 'rb') as handle:
+            duration_s = handle.getnframes() / max(1, handle.getframerate())
+        timeout_s = min(25.0, max(8.0, duration_s + 3.0))
+    except Exception:
+        pass
     pkill_aplay()
     try:
         subprocess.run(
             ['aplay', '-D', playback_dev, '-q', str(path)],
             check=False,
-            timeout=8,
+            timeout=timeout_s,
         )
     finally:
         pkill_aplay()
@@ -1044,6 +1195,144 @@ def main() -> int:
                     break
                 continue
             consecutive_misses = 0
+
+            # A plan-preview question is deliberately no-motion. It exercises
+            # the exact same visual planner and calibrated wheel mapping as an
+            # approach command, but stops after speaking and logging the plan.
+            if is_plan_preview_request(speech):
+                executor.hard_stop()
+                if camera is None:
+                    print(
+                        json.dumps(
+                            {
+                                'route': 'plan_preview',
+                                'speech': speech,
+                                'camera_error': camera_error or 'camera_disabled',
+                            }
+                        ),
+                        flush=True,
+                    )
+                    if tts is not None:
+                        speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+                try:
+                    jpeg, frame_path = capture_current_frame(speech, 'plan_preview')
+                    plan, model_text = plan_visual_approach(
+                        runtime, jpeg, speech, orch.history.render()
+                    )
+                except Exception as exc:
+                    print('plan_preview_failed', exc, file=sys.stderr, flush=True)
+                    executor.hard_stop()
+                    if tts is not None:
+                        speak_short(tts, DESCRIBE_FAIL_PHRASE, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+                briefing = plan_briefing(plan)
+                row = {
+                    'route': 'plan_preview',
+                    'speech': speech,
+                    'briefing': briefing,
+                    'visible': plan.visible,
+                    'side': plan.side,
+                    'goal': plan.goal,
+                    'plan': [
+                        {
+                            'step': item.step,
+                            'ticks': item.ticks,
+                            'wheels': list(step_wheels(item.step)),
+                        }
+                        for item in plan.steps
+                    ],
+                    'total_ticks': plan.total_ticks,
+                    'raw_ok': plan.raw_ok,
+                    'reason': plan.reason,
+                    'frame': str(frame_path),
+                    'model_text': model_text[:600],
+                    'executed': False,
+                }
+                print(json.dumps(row, ensure_ascii=False), flush=True)
+                try:
+                    frame_path.with_suffix('.preview.json').write_text(
+                        json.dumps(row, ensure_ascii=False, indent=2),
+                        encoding='utf-8',
+                    )
+                except OSError as exc:
+                    print('plan_preview_sidecar_failed', exc, file=sys.stderr, flush=True)
+                orch.history.add('user', speech)
+                orch.history.add('assistant', briefing[:800])
+                if tts is not None:
+                    speak_short(
+                        tts,
+                        briefing or DESCRIBE_FAIL_PHRASE,
+                        playback,
+                        wav_dir,
+                        DESCRIBE_SPEAK_MAX_CHARS,
+                    )
+                executor.hard_stop()
+                if args.once is not None:
+                    break
+                continue
+
+            # "What do you see" is speech-only: answered from a fresh frame with
+            # the wheels held stopped, before any motion word can match.
+            if is_describe_request(speech):
+                executor.hard_stop()
+                if camera is None:
+                    print(
+                        json.dumps(
+                            {
+                                'route': 'describe',
+                                'speech': speech,
+                                'camera_error': camera_error or 'camera_disabled',
+                            }
+                        ),
+                        flush=True,
+                    )
+                    if tts is not None:
+                        speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+                try:
+                    jpeg, frame_path = capture_current_frame(speech, 'describe')
+                except Exception as exc:
+                    print('camera_capture_failed', exc, file=sys.stderr, flush=True)
+                    if tts is not None:
+                        speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+                description, model_text = describe_scene(runtime, jpeg)
+                orch.history.add('user', speech)
+                orch.history.add('assistant', (description or model_text)[:800])
+                print(
+                    json.dumps(
+                        {
+                            'route': 'describe',
+                            'speech': speech,
+                            'description': description,
+                            'frame': str(frame_path),
+                            'model_text': model_text[:400],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(
+                        tts,
+                        description or DESCRIBE_FAIL_PHRASE,
+                        playback,
+                        wav_dir,
+                        DESCRIBE_SPEAK_MAX_CHARS,
+                    )
+                executor.hard_stop()
+                if args.once is not None:
+                    break
+                continue
 
             # Motion words never reach Cosmos: fixed nudge, acknowledged first.
             intent = match_intent(speech)

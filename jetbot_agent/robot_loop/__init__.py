@@ -22,6 +22,8 @@ from jetbot_agent.robot_loop.intents import (
     ack_phrase,
     intent_action,
     intent_wheels,
+    is_describe_request,
+    is_plan_preview_request,
     match_intent,
 )
 from jetbot_agent.robot_loop.log_executor import LogOnlyExecutor
@@ -56,6 +58,8 @@ __all__ = [
     'ack_phrase',
     'intent_action',
     'intent_wheels',
+    'is_describe_request',
+    'is_plan_preview_request',
     'match_intent',
     'parse_action',
     'parse_model_output',
