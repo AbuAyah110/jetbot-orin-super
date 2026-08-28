@@ -24,7 +24,10 @@ from jetbot_agent.robot_loop.intents import (
     intent_wheels,
     is_describe_request,
     is_plan_preview_request,
+    is_search_request,
+    is_visual_question,
     match_intent,
+    search_target,
 )
 from jetbot_agent.robot_loop.log_executor import LogOnlyExecutor
 from jetbot_agent.robot_loop.orchestrator import LoopInput, OneProcessOrchestrator
@@ -60,7 +63,10 @@ __all__ = [
     'intent_wheels',
     'is_describe_request',
     'is_plan_preview_request',
+    'is_search_request',
+    'is_visual_question',
     'match_intent',
+    'search_target',
     'parse_action',
     'parse_model_output',
     'prompt_suffix',

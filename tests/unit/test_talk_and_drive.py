@@ -23,7 +23,10 @@ from talk_and_drive import (  # noqa: E402
     _target_phrase,
     asr_transcript_usable,
     collapse_repeats,
+    camera_path_clear,
     pcm16_rms,
+    search_forward_action,
+    search_turn_action,
     speak_understand_fail,
     calibrate_cosmos_action,
     clamp_test_action,
@@ -274,3 +277,30 @@ def test_pcm16_rms_matches_known_amplitude():
     frame = array.array('h', [3276, -3276] * 160).tobytes()
     assert pcm16_rms(frame) == pytest.approx(0.10, abs=0.001)
     assert pcm16_rms(b'') == 0.0
+
+
+def test_camera_path_gate_fails_closed():
+    class Runtime:
+        def __init__(self, text):
+            self.text = text
+
+        def generate(self, **_kwargs):
+            return self.text
+
+    assert camera_path_clear(Runtime('{"clear":true}'), b'jpeg')[0] is True
+    assert camera_path_clear(Runtime('{"clear":false}'), b'jpeg')[0] is False
+    assert camera_path_clear(Runtime('uncertain'), b'jpeg')[0] is False
+    assert camera_path_clear(Runtime('{"clear":"probably"}'), b'jpeg')[0] is False
+
+
+def test_search_motion_is_short_and_bounded():
+    turn = search_turn_action()
+    relocate = search_forward_action()
+
+    assert turn.kind == relocate.kind == 'drive'
+    assert turn.vx == 0.0 and turn.wz < 0.0
+    assert relocate.vx > 0.0 and relocate.wz == 0.0
+    assert 0.0 < turn.duration_s < 0.5
+    assert 0.0 < relocate.duration_s <= 0.4
+    assert turn.duration_s < LIVE_DURATION_MAX_S
+    assert relocate.duration_s < LIVE_DURATION_MAX_S

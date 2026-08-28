@@ -78,6 +78,11 @@ from jetbot_agent.robot_loop.approach_plan import (  # noqa: E402
 )
 from jetbot_agent.robot_loop.csi_jpeg import CsiJpeg448  # noqa: E402
 from jetbot_agent.robot_loop.color_grounding import locate_color  # noqa: E402
+from jetbot_agent.robot_loop.conversation import (  # noqa: E402
+    CONVERSATION_FALLBACK,
+    conversation_action,
+)
+from jetbot_agent.robot_loop.history import ChatHistory  # noqa: E402
 from jetbot_agent.robot_loop.intents import (  # noqa: E402
     LIVE_DURATION_MAX_S,
     LIVE_VX_MAX,
@@ -88,7 +93,10 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     intent_action,
     is_describe_request,
     is_plan_preview_request,
+    is_search_request,
+    is_visual_question,
     match_intent,
+    search_target,
 )
 from jetbot_agent.robot_loop.cosmos_runtime import (  # noqa: E402
     COSMOS_ENGINE_DIR,
@@ -101,7 +109,6 @@ from jetbot_agent.robot_loop.cosmos_runtime import (  # noqa: E402
     spawn_resident,
 )
 from jetbot_agent.robot_loop.orchestrator import (  # noqa: E402
-    LoopInput,
     OneProcessOrchestrator,
 )
 
@@ -138,12 +145,16 @@ VAD_START_FRAMES = 3
 PLAYBACK_SETTLE_S = 0.25
 DEBUG_AUDIO_DIR = REPO / 'data' / 'audio' / 'debug'
 DEBUG_FRAME_DIR = REPO / 'data' / 'frames' / 'debug'
+CHAT_HISTORY_PATH = REPO / 'data' / 'runtime' / 'chat_history.json'
 WZ_WHEEL_SCALE = 0.4
 SPEAK_PLAY_MAX_CHARS = 64
 # A scene description is a whole sentence, so it gets a longer cap than the
 # one-phrase acks. Still bounded: TTS blocks the next listen window.
 DESCRIBE_SPEAK_MAX_CHARS = 180
 DESCRIBE_FAIL_PHRASE = "I couldn't tell what I'm looking at"
+SEARCH_MAX_VIEWS = 6
+SEARCH_TURN_DURATION_S = 0.35
+SEARCH_RELOCATE_DURATION_S = 0.40
 
 
 def clamp_test_action(action: RobotAction) -> RobotAction:
@@ -448,6 +459,59 @@ def verify_visual_target(
         return verification_is_safe(previous_side, visible, side), side, raw
     except Exception:
         return False, '', getattr(runtime, 'last_text', '')
+
+
+def camera_path_clear(runtime, jpeg: bytes) -> tuple[bool, str]:
+    """Conservative monocular gate for one short forward search pulse.
+
+    This is provisional obstacle avoidance, not depth or contact sensing. Any
+    malformed or uncertain answer is blocked.
+    """
+    prompt = (
+        'The robot is stopped. Inspect the current image only. Is the floor '
+        'immediately ahead visibly clear for ONE very short forward pulse? '
+        'If an object, wall, drop, feet, clutter, blur, darkness, or uncertainty '
+        'could block the chassis, clear must be false. Reply exactly one compact '
+        'JSON object: {"clear":true} or {"clear":false}. No explanation.'
+    )
+    try:
+        raw = runtime.generate(
+            system=(
+                'You are a conservative monocular path gate. False is always '
+                'safer than guessing. JSON only.'
+            ),
+            user_text=prompt,
+            image_jpeg=jpeg,
+            max_tokens=64,
+        )
+        data = extract_json_object(raw)
+    except Exception as exc:
+        return False, 'path_gate_error:{0}'.format(type(exc).__name__)
+    return data.get('clear') is True, raw
+
+
+def search_turn_action() -> RobotAction:
+    """One short in-place camera-search turn at measured wheel duty."""
+    return RobotAction(
+        kind='drive',
+        vx=0.0,
+        wz=-NUDGE_VX / WZ_WHEEL_SCALE,
+        duration_s=SEARCH_TURN_DURATION_S,
+        reason='camera_search_turn',
+        raw_ok=True,
+    )
+
+
+def search_forward_action() -> RobotAction:
+    """One short relocation pulse, only after camera_path_clear()."""
+    return RobotAction(
+        kind='drive',
+        vx=NUDGE_VX,
+        wz=0.0,
+        duration_s=SEARCH_RELOCATE_DURATION_S,
+        reason='camera_search_relocate',
+        raw_ok=True,
+    )
 
 
 def recover_cosmos_fields(action: RobotAction, model_text: str) -> RobotAction:
@@ -1147,12 +1211,29 @@ def main() -> int:
         playback_dev=alsa['alsa_playback'] if play_speak else '',
         wav_dir=wav_dir,
     )
+    chat_history = ChatHistory.load(CHAT_HISTORY_PATH, max_turns=10)
     orch = OneProcessOrchestrator(
         runtime,
         executor,
+        history=chat_history,
         drive_mode=True,
         drive_max_tokens=DRIVE_MAX_TOKENS,
     )
+
+    def history_text() -> str:
+        return orch.history.render(max_chars=1200)
+
+    def record_turn(user_text: str, assistant_text: str) -> None:
+        """Remember what was said, never raw model JSON or an old image."""
+        user_clean = ' '.join((user_text or '').split())[:300]
+        assistant_clean = ' '.join((assistant_text or '').split())[:300]
+        if not user_clean or not assistant_clean:
+            return
+        orch.history.add_turn(user_clean, assistant_clean)
+        try:
+            orch.history.save(CHAT_HISTORY_PATH)
+        except OSError as exc:
+            print('chat_history_save_failed', exc, file=sys.stderr, flush=True)
 
     camera: Optional[CsiJpeg448] = None
     camera_error = ''
@@ -1375,6 +1456,106 @@ def main() -> int:
                 continue
             consecutive_misses = 0
 
+            # Bounded room search: one fresh frame per viewpoint, short
+            # in-place turns, and at most one short relocation after a separate
+            # conservative camera path-clear gate. This is intentionally not
+            # an unbounded autonomous roam.
+            if is_search_request(speech):
+                executor.hard_stop()
+                target = search_target(speech)
+                if camera is None:
+                    reply = VISION_UNAVAILABLE_PHRASE
+                    record_turn(speech, reply)
+                    if tts is not None:
+                        speak_short(tts, reply, playback, wav_dir)
+                    continue
+                if tts is not None:
+                    speak_short(
+                        tts,
+                        ('I will look for ' + target)[:SPEAK_PLAY_MAX_CHARS],
+                        playback,
+                        wav_dir,
+                    )
+                found_side = ''
+                relocated = False
+                search_log = []
+                try:
+                    for view in range(SEARCH_MAX_VIEWS):
+                        executor.hard_stop()
+                        jpeg, frame_path = capture_current_frame(
+                            speech, 'search_{0}'.format(view + 1)
+                        )
+                        visible, side, model_text = verify_visual_target(
+                            runtime, jpeg, target, ''
+                        )
+                        search_log.append(
+                            {
+                                'view': view + 1,
+                                'frame': str(frame_path),
+                                'visible': visible,
+                                'side': side,
+                                'model_text': model_text[:240],
+                            }
+                        )
+                        if visible:
+                            found_side = side
+                            break
+                        if view == SEARCH_MAX_VIEWS - 1:
+                            break
+                        # Once per search, permit a small translation only when
+                        # a second visual query explicitly marks the immediate
+                        # floor clear. Any uncertainty keeps this as a turn.
+                        if view == 3 and not relocated:
+                            clear, path_text = camera_path_clear(runtime, jpeg)
+                            search_log[-1]['path_clear'] = clear
+                            search_log[-1]['path_model_text'] = path_text[:240]
+                            if clear:
+                                executor.execute(search_forward_action())
+                                relocated = True
+                                continue
+                        executor.execute(search_turn_action())
+                except Exception as exc:
+                    print('camera_search_failed', exc, file=sys.stderr, flush=True)
+                finally:
+                    executor.hard_stop()
+                if found_side:
+                    location = {
+                        'left': 'on my left',
+                        'center': 'in front of me',
+                        'right': 'on my right',
+                    }.get(found_side, 'in view')
+                    reply = 'I found {0} {1}.'.format(target, location)
+                elif relocated:
+                    reply = "I moved and looked around, but I couldn't find {0} safely.".format(
+                        target
+                    )
+                else:
+                    reply = "I looked around, but I couldn't find {0} safely.".format(
+                        target
+                    )
+                reply = reply[:120]
+                record_turn(speech, reply)
+                print(
+                    json.dumps(
+                        {
+                            'route': 'camera_search',
+                            'speech': speech,
+                            'target': target,
+                            'found_side': found_side,
+                            'relocated': relocated,
+                            'views': search_log,
+                            'reply': reply,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(tts, reply, playback, wav_dir, max_chars=120)
+                if args.once is not None:
+                    break
+                continue
+
             # A plan-preview question is deliberately no-motion. It exercises
             # the exact same visual planner and calibrated wheel mapping as an
             # approach command, but stops after speaking and logging the plan.
@@ -1399,7 +1580,7 @@ def main() -> int:
                 try:
                     jpeg, frame_path = capture_current_frame(speech, 'plan_preview')
                     plan, model_text = plan_visual_approach(
-                        runtime, jpeg, speech, orch.history.render()
+                        runtime, jpeg, speech, history_text()
                     )
                 except Exception as exc:
                     print('plan_preview_failed', exc, file=sys.stderr, flush=True)
@@ -1440,8 +1621,7 @@ def main() -> int:
                     )
                 except OSError as exc:
                     print('plan_preview_sidecar_failed', exc, file=sys.stderr, flush=True)
-                orch.history.add('user', speech)
-                orch.history.add('assistant', briefing[:800])
+                record_turn(speech, briefing or DESCRIBE_FAIL_PHRASE)
                 if tts is not None:
                     speak_short(
                         tts,
@@ -1485,8 +1665,7 @@ def main() -> int:
                         break
                     continue
                 description, model_text = describe_scene(runtime, jpeg)
-                orch.history.add('user', speech)
-                orch.history.add('assistant', (description or model_text)[:800])
+                record_turn(speech, description or DESCRIBE_FAIL_PHRASE)
                 print(
                     json.dumps(
                         {
@@ -1507,6 +1686,77 @@ def main() -> int:
                         playback,
                         wav_dir,
                         DESCRIBE_SPEAK_MAX_CHARS,
+                    )
+                executor.hard_stop()
+                if args.once is not None:
+                    break
+                continue
+
+            # Questions about a particular object are parked conversational
+            # turns with one fresh frame. Unlike "what do you see", this keeps
+            # the user's exact question and short text history so follow-ups
+            # such as "what color is it?" and "what do you think of that?"
+            # resolve naturally. The helper can only return speak or stop.
+            if is_visual_question(speech):
+                executor.hard_stop()
+                if camera is None:
+                    reply = VISION_UNAVAILABLE_PHRASE
+                    record_turn(speech, reply)
+                    if tts is not None:
+                        speak_short(tts, reply, playback, wav_dir)
+                    continue
+                try:
+                    jpeg, frame_path = capture_current_frame(
+                        speech, 'visual_conversation'
+                    )
+                    action, model_text = conversation_action(
+                        runtime,
+                        speech,
+                        history_text(),
+                        image_jpeg=jpeg,
+                    )
+                except Exception as exc:
+                    print(
+                        'visual_conversation_failed',
+                        exc,
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    action = RobotAction(
+                        kind='stop',
+                        raw_ok=False,
+                        reason='visual_conversation_failed',
+                    )
+                    model_text = ''
+                    frame_path = Path('')
+                reply = (
+                    action.say
+                    if action.kind == 'speak' and action.say
+                    else "I can't answer that from what I can see."
+                )
+                record_turn(speech, reply)
+                print(
+                    json.dumps(
+                        {
+                            'route': 'visual_conversation',
+                            'speech': speech,
+                            'reply': reply,
+                            'frame': str(frame_path),
+                            'raw_ok': action.raw_ok,
+                            'reason': action.reason,
+                            'model_text': model_text[:400],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(
+                        tts,
+                        reply,
+                        playback,
+                        wav_dir,
+                        max_chars=120,
                     )
                 executor.hard_stop()
                 if args.once is not None:
@@ -1539,44 +1789,47 @@ def main() -> int:
                     break
                 executor.execute(action)
                 executor.hard_stop()
-                if args.once is not None:
-                    break
-                continue
-
-            if camera is None:
-                executor.hard_stop()
-                print(
-                    json.dumps(
-                        {'route': 'cosmos', 'speech': speech, 'camera_error': camera_error or 'camera_disabled'}
-                    ),
-                    flush=True,
-                )
-                if tts is not None:
-                    speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
-                if args.once is not None:
-                    break
-                continue
-            try:
-                jpeg, frame_path = capture_current_frame(speech)
-            except Exception as exc:
-                executor.hard_stop()
-                print('camera_capture_failed', exc, file=sys.stderr, flush=True)
-                if tts is not None:
-                    speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
+                record_turn(speech, ack or 'Command completed')
                 if args.once is not None:
                     break
                 continue
 
             if object_relative_request(speech):
+                if camera is None:
+                    executor.hard_stop()
+                    print(
+                        json.dumps(
+                            {
+                                'route': 'approach_plan',
+                                'speech': speech,
+                                'camera_error': camera_error or 'camera_disabled',
+                            }
+                        ),
+                        flush=True,
+                    )
+                    if tts is not None:
+                        speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+                try:
+                    jpeg, frame_path = capture_current_frame(speech)
+                except Exception as exc:
+                    executor.hard_stop()
+                    print('camera_capture_failed', exc, file=sys.stderr, flush=True)
+                    if tts is not None:
+                        speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
                 # Planning is a separate parked phase. Cosmos emits only symbols;
                 # calibrated PWM is selected below after the plan passes the gate.
                 executor.hard_stop()
                 plan, model_text = plan_visual_approach(
-                    runtime, jpeg, speech, orch.history.render()
+                    runtime, jpeg, speech, history_text()
                 )
-                orch.history.add('user', speech)
-                orch.history.add('assistant', model_text[:800])
                 briefing = plan_briefing(plan)
+                record_turn(speech, briefing or 'I could not make a safe movement plan.')
                 plan_row = {
                     'route': 'approach_plan',
                     'speech': speech,
@@ -1712,19 +1965,22 @@ def main() -> int:
                     break
                 continue
 
-            try:
-                planned = orch.plan(LoopInput(speech=speech, goal=speech, image_jpeg=jpeg))
-                planned = recover_cosmos_fields(planned, getattr(runtime, 'last_text', ''))
-                model_text = getattr(runtime, 'last_text', '')
-                action = calibrate_cosmos_action(planned, speech)
-            except Exception as exc:
-                print('tick_exception', exc, file=sys.stderr, flush=True)
-                executor.hard_stop()
-                action = parse_action(None)
-                model_text = getattr(runtime, 'last_text', '')
+            # Everything else is a parked conversational turn. The helper
+            # accepts only a speak action, so an open-ended question can never
+            # turn into model-selected movement. Text-only chat also remains
+            # available when the camera is disabled or unavailable.
+            executor.hard_stop()
+            action, model_text = conversation_action(
+                runtime,
+                speech,
+                history_text(),
+                image_jpeg=None,
+            )
+            reply = action.say if action.kind == 'speak' else CONVERSATION_FALLBACK
+            record_turn(speech, reply)
 
             row = {
-                'route': 'cosmos',
+                'route': 'conversation',
                 'speech': speech,
                 'gated_action': action.kind,
                 'vx': action.vx,
@@ -1735,14 +1991,16 @@ def main() -> int:
                 'model_text': model_text[:400],
             }
             print(json.dumps(row, ensure_ascii=False), flush=True)
-            feedback = cosmos_feedback(action, speech)
-            if not action.raw_ok:
-                speak_understand_fail(tts, playback, wav_dir)
-            elif tts is not None and feedback:
-                speak_short(tts, feedback, playback, wav_dir)
+            if tts is not None:
+                speak_short(
+                    tts,
+                    reply,
+                    playback,
+                    wav_dir,
+                    max_chars=120,
+                )
             if stop_requested:
                 break
-            executor.execute(action)
             executor.hard_stop()
             if args.once is not None:
                 break

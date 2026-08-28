@@ -21,7 +21,10 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     intent_wheels,
     is_describe_request,
     is_plan_preview_request,
+    is_search_request,
+    is_visual_question,
     match_intent,
+    search_target,
 )
 
 from talk_and_drive import (  # noqa: E402
@@ -52,6 +55,20 @@ from talk_and_drive import (  # noqa: E402
     ],
 )
 def test_motion_words_match_loosely(transcript, expected):
+    assert match_intent(transcript) == expected
+
+
+@pytest.mark.parametrize(
+    'transcript, expected',
+    [
+        ('Could you move forward please?', 'forward'),
+        ('Would you go back for me?', 'back'),
+        ('Can you turn left a little?', 'left'),
+        ('I want you to turn right now', 'right'),
+        ('Please stop for me', 'stop'),
+    ],
+)
+def test_polite_natural_motion_commands_match(transcript, expected):
     assert match_intent(transcript) == expected
 
 
@@ -164,6 +181,57 @@ def test_nudges_survive_the_live_loop_clamp():
 )
 def test_describe_questions_are_recognized(transcript):
     assert is_describe_request(transcript) is True
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        'WHAT COLOR IS THAT OBJECT',
+        'what is this?',
+        'can you identify the blue thing',
+        'tell me about that object',
+        'what do you think of it',
+        'how many objects are there',
+        'where is the red object',
+        'is that a toy',
+    ],
+)
+def test_visual_follow_up_questions_are_recognized(transcript):
+    assert is_visual_question(transcript) is True
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        'WHAT IS THE CAPITAL OF CANADA',
+        'TELL ME A JOKE',
+        'HOW ARE YOU',
+        'MOVE FORWARD',
+        'WHAT IS YOUR PLAN TO MOVE TOWARD THE BLUE OBJECT',
+    ],
+)
+def test_non_visual_conversation_does_not_open_camera(transcript):
+    assert is_visual_question(transcript) is False
+
+
+@pytest.mark.parametrize(
+    'transcript,target',
+    [
+        ('LOOK FOR THE BLUE BOX', 'blue box'),
+        ('SEARCH AROUND THE ROOM FOR MY KEYS', 'my keys'),
+        ('MOVE AROUND THE ROOM AND LOOK FOR A RED OBJECT', 'red object'),
+        ('FIND THE GREEN TOY', 'green toy'),
+        ('LOCATE THE PERSON', 'person'),
+    ],
+)
+def test_bounded_room_search_extracts_target(transcript, target):
+    assert is_search_request(transcript) is True
+    assert search_target(transcript) == target
+
+
+def test_approach_is_not_mistaken_for_room_search():
+    assert is_search_request('MOVE TOWARD THE BLUE OBJECT') is False
+    assert is_search_request('TURN LEFT') is False
 
 
 @pytest.mark.parametrize(

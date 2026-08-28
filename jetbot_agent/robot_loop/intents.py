@@ -58,6 +58,13 @@ ACK_PHRASES = {
 # an object-relative request ("move toward the red object on the left") must
 # reach Cosmos with the camera image instead of becoming a blind turn.
 _FILLER = r'(?:please|now|robot|jetbot)'
+_POLITE_PREFIX = re.compile(
+    r'^(?:(?:please\s+)|(?:(?:can|could|would|will)\s+you\s+)|'
+    r'(?:i\s+(?:want|need)\s+you\s+to\s+))+'
+)
+_POLITE_SUFFIX = re.compile(
+    r'(?:\s+(?:please|for\s+me|a\s+little|a\s+bit|now))+$'
+)
 _INTENT_PATTERNS = (
     (
         STOP,
@@ -99,6 +106,31 @@ _PLAN_PREVIEW_PATTERN = re.compile(
     r')\b'
 )
 
+# Parked visual follow-ups that need the current frame but are not a complete
+# scene description or a navigation request. Deictic questions ("what is
+# that?", "what color is it?") intentionally land here so short follow-ups can
+# use both the fresh image and bounded text history.
+_VISUAL_QUESTION_PATTERN = re.compile(
+    r'\b(?:'
+    r'(?:what|which)\s+(?:color|colour|shape|kind|type)\s+(?:is|are)'
+    r'|(?:what|who)\s+is\s+(?:this|that|it)'
+    r'|(?:is|are)\s+(?:this|that|it|the\s+\w+\s+object)'
+    r'|(?:can|could)\s+you\s+(?:identify|recognize|see|read)'
+    r'|(?:tell|talk)\s+(?:(?:to\s+)?me\s+)?about\s+(?:this|that|it|the\s+\w+\s+object)'
+    r'|what\s+do\s+you\s+think\s+(?:of|about)\s+(?:this|that|it|the\s+\w+\s+object)'
+    r'|how\s+many\s+(?:objects|things|items)'
+    r'|where\s+is\s+(?:this|that|it|the\s+\w+\s+object)'
+    r'|(?:object|thing|item)\s+(?:you\s+see|in\s+front|on\s+the\s+(?:left|right))'
+    r')\b'
+)
+
+_SEARCH_PATTERN = re.compile(
+    r'\b(?:'
+    r'(?:look|search|hunt)\s+(?:around\s+)?(?:the\s+room\s+)?for'
+    r'|find|locate'
+    r')\s+(?:me\s+)?(?P<target>.+)$'
+)
+
 
 def normalize_transcript(text: str) -> str:
     """Lowercase and strip punctuation. ASR returns UPPERCASE with repeats."""
@@ -112,6 +144,8 @@ def match_intent(text: str) -> Optional[str]:
     speech = normalize_transcript(text)
     if not speech:
         return None
+    speech = _POLITE_PREFIX.sub('', speech)
+    speech = _POLITE_SUFFIX.sub('', speech)
     speech = re.sub(r'^(?:' + _FILLER + r'\s+)*', '', speech)
     speech = re.sub(r'(?:\s+' + _FILLER + r')*$', '', speech)
     for intent, pattern in _INTENT_PATTERNS:
@@ -143,6 +177,31 @@ def is_plan_preview_request(text: str) -> bool:
     if not speech:
         return False
     return bool(_PLAN_PREVIEW_PATTERN.search(speech))
+
+
+def is_visual_question(text: str) -> bool:
+    """True for parked questions that require a fresh camera frame."""
+    speech = normalize_transcript(text)
+    if not speech:
+        return False
+    return bool(_VISUAL_QUESTION_PATTERN.search(speech))
+
+
+def search_target(text: str) -> str:
+    """Return a requested visual-search target, or an empty string."""
+    speech = normalize_transcript(text)
+    match = _SEARCH_PATTERN.search(speech)
+    if match is None:
+        return ''
+    target = match.group('target')
+    target = re.sub(r'^(?:a|an|the)\s+', '', target)
+    target = re.sub(r'\s+(?:please|for\s+me)$', '', target)
+    return target[:48].strip()
+
+
+def is_search_request(text: str) -> bool:
+    """True for bounded camera search, distinct from approach movement."""
+    return bool(search_target(text))
 
 
 def intent_wheels(intent: str) -> tuple[float, float]:
