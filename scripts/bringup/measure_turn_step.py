@@ -47,7 +47,17 @@ def main() -> int:
     parser.add_argument('--pulses', type=int, default=6)
     parser.add_argument('--direction', choices=['left', 'right'], default='right')
     parser.add_argument('--no-pwm', action='store_true')
+    parser.add_argument(
+        '--save-frames',
+        metavar='DIR',
+        help='Write every frame here. Pixel counts alone hide what the camera '
+        'actually saw, which is how a door frame passed as the target.',
+    )
     args = parser.parse_args()
+
+    frame_dir = Path(args.save_frames) if args.save_frames else None
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
 
     duty = NUDGE_VX
     # Same signed wheel pair the detour uses, so the measurement transfers.
@@ -69,6 +79,8 @@ def main() -> int:
             camera.settle()
             jpeg = camera.capture_jpeg()
             found = locate_color(jpeg, args.target)
+            if frame_dir is not None:
+                (frame_dir / 'pulse_{0:02d}.jpg'.format(pulse)).write_bytes(jpeg)
             row = {
                 'pulse': pulse,
                 'visible': found.visible,

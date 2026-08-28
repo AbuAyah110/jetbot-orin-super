@@ -94,8 +94,10 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     NUDGE_VX,
     ack_phrase,
     around_target,
+    behind_target,
     intent_action,
     is_around_request,
+    is_behind_request,
     is_describe_request,
     is_plan_preview_request,
     is_search_request,
@@ -108,6 +110,7 @@ from jetbot_agent.robot_loop.memory_stubs import (  # noqa: E402
     LanceMemory,
     format_rag_context,
 )
+from jetbot_agent.robot_loop.orbit import acquire_target, run_orbit  # noqa: E402
 from jetbot_agent.robot_loop.cosmos_runtime import (  # noqa: E402
     COSMOS_ENGINE_DIR,
     CosmosResidentClient,
@@ -561,6 +564,60 @@ def around_forward_action() -> RobotAction:
         wz=0.0,
         duration_s=AROUND_FORWARD_DURATION_S,
         reason='around_forward',
+        raw_ok=True,
+    )
+
+
+# Calibrated on this chassis with scripts/bringup/measure_turn_step.py: at the
+# stiction-clearing duty a 0.15 s in-place pulse swung a tracked target 142-150
+# px across a 448 px frame, and a full revolution took about 15.5 pulses. That
+# is roughly 23 deg per pulse and a 69 deg horizontal field of view, and the two
+# figures agree. The detour's 0.35 s pulse is about 54 deg, which is why it threw
+# a centred target clean out of view.
+ORBIT_TURN_DURATION_S = 0.15
+ORBIT_FORWARD_DURATION_S = 0.45
+
+# Every orbit outcome names what actually stopped it. A maneuver that cannot
+# finish must not be reported as if it had.
+ORBIT_ABORT_PHRASES = {
+    'target_not_located': 'I could not pick it out by colour to begin with.',
+    'target_lost': 'I lost sight of it, so I stopped rather than circle blind.',
+    'closing_on_target': 'It was getting close, so I stopped instead of risking '
+    'a bump.',
+    'target_too_far': 'I drifted too far out to keep track of it.',
+    'cycle_budget_exhausted': 'I used up the steps I allow myself for one turn '
+    'around it.',
+    'stop_requested': 'You asked me to stop.',
+}
+
+
+def orbit_turn_action(direction: str, pulses: int) -> RobotAction:
+    """Calibrated in-place turn of ``pulses`` x 23 degrees."""
+    sign = 1.0 if direction == 'left' else -1.0
+    return RobotAction(
+        kind='drive',
+        vx=0.0,
+        wz=sign * NUDGE_VX / WZ_WHEEL_SCALE,
+        duration_s=ORBIT_TURN_DURATION_S * max(1, pulses),
+        reason='orbit_turn_{0}_{1}'.format(direction, pulses),
+        raw_ok=True,
+    )
+
+
+def orbit_forward_action() -> RobotAction:
+    """One tangential pulse of an orbit.
+
+    The target is out of view during this move, which is unavoidable: orbiting
+    means driving perpendicular to the target and the camera only sees 69
+    degrees. Nothing on this robot detects obstacles, so the pulse is kept short
+    and the orbit's own range guard is the only protection.
+    """
+    return RobotAction(
+        kind='drive',
+        vx=NUDGE_VX,
+        wz=0.0,
+        duration_s=ORBIT_FORWARD_DURATION_S,
+        reason='orbit_forward',
         raw_ok=True,
     )
 
@@ -1963,6 +2020,126 @@ def main() -> int:
                 executor.execute(action)
                 executor.hard_stop()
                 record_turn(speech, ack or 'Command completed')
+                if args.once is not None:
+                    break
+                continue
+
+            # "Get behind the red object" is a half orbit, not a sidestep. It is
+            # checked before the detour so "circle it" and "all the way around"
+            # reach the orbit rather than a pass-by.
+            if is_behind_request(speech):
+                executor.hard_stop()
+                target = behind_target(speech) or 'that'
+                if camera is None:
+                    record_turn(speech, VISION_UNAVAILABLE_PHRASE)
+                    if tts is not None:
+                        speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+
+                if not target_color(target):
+                    # Same limit as the detour: pixel colour grounding is the
+                    # only near-field perception that works here.
+                    refusal = (
+                        'I can only circle something I can pick out by colour, '
+                        'like a red, blue or green object. I have no distance '
+                        'sensor to track the {0} by shape.'
+                    ).format(target)
+                    record_turn(speech, refusal)
+                    if tts is not None:
+                        speak_short(tts, refusal, playback, wav_dir, max_chars=160)
+                    if args.once is not None:
+                        break
+                    continue
+
+                def orbit_locate(phase: str):
+                    """Settled frame, then deterministic pixel evidence.
+
+                    Settling matters: a frame pulled straight after a turn is
+                    motion-blurred and washes out the colour dominance.
+                    """
+                    camera.settle()
+                    orbit_jpeg, _ = capture_current_frame(
+                        speech, 'orbit_{0}'.format(phase)
+                    )
+                    found = locate_color(orbit_jpeg, target)
+                    print(
+                        'orbit_locate',
+                        json.dumps({'phase': phase, **found.as_dict()}),
+                        flush=True,
+                    )
+                    return found
+
+                def orbit_turn(direction: str, pulses: int) -> None:
+                    executor.execute(orbit_turn_action(direction, pulses))
+                    executor.hard_stop()
+
+                def orbit_forward() -> None:
+                    executor.execute(orbit_forward_action())
+                    executor.hard_stop()
+
+                briefing = (
+                    'Working my way behind the {0}. I circle in short steps and '
+                    'stop if I lose sight of it.'
+                ).format(target)
+                if tts is not None:
+                    speak_short(tts, briefing, playback, wav_dir, max_chars=140)
+
+                # Find and centre the target first: the orbit's bookkeeping
+                # starts from a known bearing, and the robot may well be facing
+                # somewhere else entirely.
+                if acquire_target(locate=orbit_locate, turn=orbit_turn) is None:
+                    executor.hard_stop()
+                    missing = (
+                        'I turned all the way round and could not find the {0}.'
+                    ).format(target)
+                    record_turn(speech, missing)
+                    if tts is not None:
+                        speak_short(tts, missing, playback, wav_dir, max_chars=140)
+                    if args.once is not None:
+                        break
+                    continue
+
+                outcome = run_orbit(
+                    locate=orbit_locate,
+                    turn=orbit_turn,
+                    forward=orbit_forward,
+                    should_stop=lambda: stop_requested,
+                )
+                executor.hard_stop()
+                print(
+                    'orbit_result',
+                    json.dumps(
+                        {
+                            'target': target,
+                            'orbit_deg': round(outcome.orbit_deg, 1),
+                            'cycles': outcome.cycles,
+                            'aborted': outcome.aborted,
+                            'log': outcome.log,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+
+                travelled = int(round(outcome.orbit_deg))
+                if outcome.reached_behind:
+                    reply = (
+                        'I am behind the {0} now, about {1} degrees around from '
+                        'where I started.'
+                    ).format(target, travelled)
+                else:
+                    reason = ORBIT_ABORT_PHRASES.get(
+                        outcome.aborted, 'I stopped because I was unsure.'
+                    )
+                    reply = (
+                        'I got about {0} degrees around the {1}, not all the '
+                        'way behind it. {2}'
+                    ).format(travelled, target, reason)
+                record_turn(speech, reply)
+                if tts is not None:
+                    speak_short(tts, reply, playback, wav_dir, max_chars=180)
                 if args.once is not None:
                     break
                 continue

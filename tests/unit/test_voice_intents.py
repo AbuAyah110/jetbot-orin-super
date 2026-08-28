@@ -316,14 +316,29 @@ def test_execution_and_description_are_not_plan_previews(transcript):
         ('GO AROUND THE OBJECT IN FRONT OF YOU', 'object'),
         ('MOVE AROUND THE BOX', 'box'),
         ('DRIVE AROUND THE OBJECT', 'object'),
-        ('GO ALL THE WAY AROUND THE RED OBJECT', 'red object'),
-        ('CIRCLE THE CHAIR', 'chair'),
         ('PLEASE GO AROUND THE BOX ON YOUR LEFT', 'box'),
     ],
 )
 def test_around_requests_are_recognized_as_movement(transcript, target):
     assert is_around_request(transcript) is True
     assert around_target(transcript) == target
+
+
+@pytest.mark.parametrize(
+    'transcript, target',
+    [
+        ('GO ALL THE WAY AROUND THE RED OBJECT', 'red object'),
+        ('CIRCLE THE CHAIR', 'chair'),
+    ],
+)
+def test_full_circle_phrasing_asks_for_an_orbit_not_a_pass_by(transcript, target):
+    from jetbot_agent.robot_loop.intents import behind_target, is_behind_request
+
+    # These used to route to the detour, which only ever passes an object and
+    # would have reported success after a sidestep.
+    assert is_behind_request(transcript) is True
+    assert behind_target(transcript) == target
+    assert is_around_request(transcript) is False
     # A detour must not be answered by a parked speech-only route.
     assert is_visual_question(transcript) is False
     assert is_describe_request(transcript) is False
@@ -376,3 +391,42 @@ def test_ack_phrases_are_short_enough_to_speak():
     assert ack_phrase('stop') == 'Stopping'
     for phrase in ACK_PHRASES.values():
         assert 0 < len(phrase) <= SPEAK_PLAY_MAX_CHARS
+
+
+def test_behind_requests_are_recognised_and_targets_extracted():
+    from jetbot_agent.robot_loop.intents import behind_target, is_behind_request
+
+    assert is_behind_request('get behind the red object') is True
+    assert behind_target('get behind the red object') == 'red object'
+    assert behind_target('go behind the blue box please') == 'blue box'
+    assert behind_target('get to the other side of the red truck') == 'red truck'
+    assert behind_target('circle the green chair') == 'green chair'
+    assert behind_target('orbit around the red object') == 'red object'
+    assert behind_target('drive all the way around the blue bin') == 'blue bin'
+    assert behind_target('go behind the object in front of you') == 'object'
+
+
+def test_a_pass_by_is_not_mistaken_for_a_half_orbit():
+    from jetbot_agent.robot_loop.intents import (
+        around_target,
+        is_around_request,
+        is_behind_request,
+    )
+
+    # A detour and a half orbit are different maneuvers with different failure
+    # modes, so the two routes must not overlap.
+    assert is_behind_request('go around the red object') is False
+    assert is_around_request('go around the red object') is True
+    assert is_around_request('get behind the red object') is False
+    # "All the way around" and "circle" mean a full orbit, not a pass-by.
+    assert is_around_request('drive all the way around the blue bin') is False
+    assert around_target('drive past the red object') == 'red object'
+
+
+def test_behind_requests_still_count_as_motion_commands():
+    from jetbot_agent.robot_loop.intents import is_motion_command, is_visual_question
+
+    # A motion verb must veto the speak-only routes, or the robot answers a
+    # drive request with a sentence.
+    assert is_motion_command('get behind the red object') is True
+    assert is_visual_question('get behind the red object') is False

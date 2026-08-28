@@ -24,7 +24,18 @@ SUPPORTED_COLORS = ('red', 'blue', 'green')
 # the floor itself qualify, which is how background became a "target".
 MIN_DOMINANCE = 20
 MIN_VALUE = 60
-MIN_PIXELS = 60
+# Dominance as a fraction of the channel value, which is what separates a
+# saturated object from a tinted surface. Measured under this room's pink
+# ambient lighting: wall pixels near (200, 150, 170) clear the absolute
+# threshold with a dominance of 30, so 36-52% of the frame counted as "red" and
+# the real red truck was thrown away as covering too much of the view. That
+# wall scores 0.15 here; the truck scores about 0.8.
+MIN_REL_DOMINANCE = 0.30
+# Measured on this room's frames after the relative-dominance test: leftover
+# specular noise peaked at 142 px, while the truck cut off at the frame edge
+# still measured 2375. 250 sits clear of the noise with an order of magnitude of
+# headroom on the weakest true detection.
+MIN_PIXELS = 250
 # A real object occupies a modest, contiguous part of the view. A mask covering
 # more than this is lighting or floor, not a thing to drive at.
 MAX_FRACTION = 0.20
@@ -32,6 +43,10 @@ MAX_FRACTION = 0.20
 # floor and walls trip the colour test across ~0.83 of the width; the actual
 # objects measured 0.25 or less.
 MAX_SPAN = 0.45
+# Empty columns tolerated inside one cluster. A JPEG-compressed object has
+# ragged edges and thin highlights, so a few blank columns do not mean a
+# separate object; 12 of 448 is under 3% of the width.
+CLUSTER_GAP_COLUMNS = 12
 
 
 @dataclass(frozen=True)
@@ -79,6 +94,38 @@ def _channel(color: str, red: int, green: int, blue: int) -> int:
     return {'red': red, 'blue': blue, 'green': green}.get(color, 0)
 
 
+def _largest_cluster(columns: list) -> tuple:
+    """Return ``(start, end, pixels)`` of the heaviest run of matching columns.
+
+    Runs separated by more than ``CLUSTER_GAP_COLUMNS`` blank columns are
+    treated as different objects, and the heaviest one wins.
+    """
+    best = (0, 0, 0)
+    start = None
+    end = 0
+    total = 0
+    blanks = 0
+    for x, count in enumerate(columns):
+        if count:
+            if start is None:
+                start = x
+                total = 0
+            end = x
+            total += count
+            blanks = 0
+        elif start is not None:
+            blanks += 1
+            if blanks > CLUSTER_GAP_COLUMNS:
+                if total > best[2]:
+                    best = (start, end, total)
+                start = None
+                total = 0
+                blanks = 0
+    if start is not None and total > best[2]:
+        best = (start, end, total)
+    return best
+
+
 def locate_color(jpeg: bytes, target: str) -> ColorGrounding:
     """Return a side only when the colour evidence is unambiguous."""
     color = target_color(target)
@@ -100,12 +147,16 @@ def locate_color(jpeg: bytes, target: str) -> ColorGrounding:
     columns = [0] * width
     matched = 0
     for index, (red, green, blue) in enumerate(pixels):
-        if (
-            _channel(color, red, green, blue) >= MIN_VALUE
-            and _dominance(color, red, green, blue) >= MIN_DOMINANCE
-        ):
-            columns[index % width] += 1
-            matched += 1
+        value = _channel(color, red, green, blue)
+        if value < MIN_VALUE:
+            continue
+        dominance = _dominance(color, red, green, blue)
+        if dominance < MIN_DOMINANCE:
+            continue
+        if dominance < value * MIN_REL_DOMINANCE:
+            continue
+        columns[index % width] += 1
+        matched += 1
 
     fraction = matched / float(width * height)
     if matched < MIN_PIXELS:
@@ -119,25 +170,28 @@ def locate_color(jpeg: bytes, target: str) -> ColorGrounding:
             rejected='covers_too_much_of_frame',
         )
 
-    # Discard the outer 10% of matches on each side, then ask how wide the
-    # remainder is. Floor and wall tint stretch across the view; an object does
-    # not.
-    low_cut = matched * 0.10
-    high_cut = matched * 0.90
-    seen = 0
-    x_low = x_high = 0
-    for x, count in enumerate(columns):
-        if not count:
-            continue
-        if seen <= low_cut:
-            x_low = x
-        if seen <= high_cut:
-            x_high = x
-        seen += count
+    # Measure the heaviest cluster rather than every matching pixel. With the
+    # truck centred and small red patches in two corners, a percentile span
+    # stretched across 0.70 of the width while the truck itself covered 0.22, so
+    # a clean centred target was rejected as diffuse. The cluster is the object
+    # being tracked; stray colour elsewhere in the room no longer votes on its
+    # position or its size.
+    x_low, x_high, clustered = _largest_cluster(columns)
+    if clustered < MIN_PIXELS:
+        return ColorGrounding(
+            color=color, pixels=clustered, width=width, fraction=fraction,
+            rejected='too_few_pixels',
+        )
+    fraction = clustered / float(width * height)
+    if fraction > MAX_FRACTION:
+        return ColorGrounding(
+            color=color, pixels=clustered, width=width, fraction=fraction,
+            rejected='covers_too_much_of_frame',
+        )
     span = (x_high - x_low) / float(width)
     if span > MAX_SPAN:
         return ColorGrounding(
-            color=color, pixels=matched, width=width, fraction=fraction,
+            color=color, pixels=clustered, width=width, fraction=fraction,
             span=span, rejected='diffuse_not_an_object',
         )
 
@@ -146,6 +200,7 @@ def locate_color(jpeg: bytes, target: str) -> ColorGrounding:
     )
     inner = sum(columns[x_low:x_high + 1])
     center_x = weighted / float(inner) if inner else (x_low + x_high) / 2.0
+    matched = clustered
     side = (
         'left' if center_x < width / 3
         else 'right' if center_x >= 2 * width / 3

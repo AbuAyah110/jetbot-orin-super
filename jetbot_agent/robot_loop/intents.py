@@ -140,17 +140,38 @@ _MOTION_VERB = (
     r'(?:move|go|drive|turn|navigate|steer|roll|head|reverse|back\s+up'
     r'|circle|orbit|swing|walk)'
 )
+# "Get behind the truck" and "park behind it" are movement too, but "get" and
+# "park" are only motion verbs in that construction, so they are kept out of
+# _MOTION_VERB and matched via the behind patterns instead.
+_MOTION_COMMAND_EXTRA = re.compile(
+    r'^(?:get|come|park)\s+(?:around\s+)?(?:behind|to\s+the\s+(?:back|rear|other'
+    r'\s+side|far\s+side))\b'
+)
 _MOTION_COMMAND_PATTERN = re.compile(r'^' + _MOTION_VERB + r'\b')
 
 # Detour requests ("go around the box"). These are movement, not conversation,
 # and they are not an approach: the goal is to pass the object rather than
 # close on it.
 _AROUND_PATTERNS = (
+    re.compile(_MOTION_VERB + r'\s+(?:around|round|past)\s+(?P<target>.+)$'),
+)
+# "Get behind it" is a half orbit, not a sidestep: the robot has to travel round
+# the object and end on its far side. Kept apart from the detour patterns
+# because the two maneuvers and their failure modes are different. "Circle",
+# "orbit" and "all the way around" belong here rather than with the detour,
+# which only ever passes an object.
+_BEHIND_PATTERNS = (
     re.compile(
-        _MOTION_VERB + r'\s+(?:all\s+the\s+way\s+)?(?:around|round|past)\s+'
-        r'(?P<target>.+)$'
+        r'\b(?:get|go|move|drive|come|park)\s+(?:around\s+)?behind\s+(?P<target>.+)$'
     ),
-    re.compile(r'\b(?:circle|orbit)\s+(?P<target>.+)$'),
+    re.compile(
+        r'\b(?:get|go|move|drive)\s+(?:to|on)\s+the\s+'
+        r'(?:back|rear|other\s+side|far\s+side)\s+of\s+(?P<target>.+)$'
+    ),
+    re.compile(r'\b(?:circle|orbit)\s+(?:around\s+)?(?P<target>.+)$'),
+    re.compile(
+        _MOTION_VERB + r'\s+all\s+the\s+way\s+(?:around|round)\s+(?P<target>.+)$'
+    ),
 )
 # "the object in front of you" names the object; the locative is not part of
 # the name and must not reach TTS or the detector prompt.
@@ -191,7 +212,9 @@ def is_motion_command(text: str) -> bool:
     speech = strip_politeness(normalize_transcript(text))
     if not speech:
         return False
-    return bool(_MOTION_COMMAND_PATTERN.match(speech))
+    if _MOTION_COMMAND_PATTERN.match(speech):
+        return True
+    return bool(_MOTION_COMMAND_EXTRA.match(speech))
 
 
 def match_intent(text: str) -> Optional[str]:
@@ -243,12 +266,12 @@ def is_visual_question(text: str) -> bool:
     return bool(_VISUAL_QUESTION_PATTERN.search(speech))
 
 
-def around_target(text: str) -> str:
-    """Return the object a detour was requested around, or an empty string."""
+def _match_target(text: str, patterns) -> str:
+    """First target named by any pattern, stripped of locatives and articles."""
     speech = strip_politeness(normalize_transcript(text))
     if not speech:
         return ''
-    for pattern in _AROUND_PATTERNS:
+    for pattern in patterns:
         match = pattern.search(speech)
         if match is None:
             continue
@@ -261,9 +284,24 @@ def around_target(text: str) -> str:
     return ''
 
 
+def around_target(text: str) -> str:
+    """Return the object a detour was requested around, or an empty string."""
+    return _match_target(text, _AROUND_PATTERNS)
+
+
 def is_around_request(text: str) -> bool:
     """True for a bounded detour past an object, distinct from approaching it."""
     return bool(around_target(text))
+
+
+def behind_target(text: str) -> str:
+    """Return the object the robot was asked to get behind, or empty."""
+    return _match_target(text, _BEHIND_PATTERNS)
+
+
+def is_behind_request(text: str) -> bool:
+    """True for a half orbit ending on the far side of an object."""
+    return bool(behind_target(text))
 
 
 def search_target(text: str) -> str:
