@@ -51,7 +51,8 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | G-Cosmos Jetson build | **Pass** — SM87 `llm.engine` 777 MiB + `visual.engine` 785 MiB | `bash ~/jetbot-thin-stack/jetbot_vlm_agent/scripts/JETSON_BUILD.sh` |
 | G-Cosmos load / RAM | **Pass** — peak 5441/7620 MB, Cosmos delta **2.88 GiB**, under the 5.0 GiB abort | `tegrastats-cosmos-load.txt` |
 | One-process scaffold | Parser/camera/prompts + look-then-log resident loader | `pytest tests/unit/test_look_then_log.py` |
-| Robot integration | **Look-then-log pass** (4 ticks, no PWM/TTS); `jetbot.Robot` still unwired | `scripts/bringup/look_then_log.py` |
+| Robot integration | **Talk-and-drive live** — VAD listen, no beep; PWM via `jetbot.Robot` | `scripts/bringup/talk_and_drive.py` |
+| Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
 | Memory | Stub only; local 127 MiB BGE ONNX candidate found, not loaded | CPU BGE vector round-trip in LanceDB |
 
 Cosmos residency measured 2026-08-27: baseline **2487 / 7620 MB**, peak with the

@@ -14,7 +14,7 @@ Issue tracker: [`TASKBOARD.md`](../../TASKBOARD.md) · spec: [`JETBOT_SPEC.md`](
 | D Audio | [04-audio.md](04-audio.md) | `./scripts/bringup/test_alsa.sh` |
 | E Python skeleton | [05-python-skeleton.md](05-python-skeleton.md) | `./scripts/bringup/test_python_skeleton.sh` |
 | F Voice | [06-voice.md](06-voice.md) · F3 evidence: [06b-f3-rnnoise.md](06b-f3-rnnoise.md) | safe ALSA → WebRTC APM → Zipformer + Piper VITS → guarded duplex |
-| G Model runtimes | [07-tensorrt.md](07-tensorrt.md) · G1 evidence: [07-tensorrt-g1.md](07-tensorrt-g1.md) · Cosmos Nano: [07-cosmos-nano.md](07-cosmos-nano.md) | Cosmos waits on workstation INT4 ONNX; no model loaded |
+| G Model runtimes | [07-tensorrt.md](07-tensorrt.md) · G1 evidence: [07-tensorrt-g1.md](07-tensorrt-g1.md) · Cosmos Nano: [07-cosmos-nano.md](07-cosmos-nano.md) · Resume: [11-resume-after-power.md](11-resume-after-power.md) | Cosmos waits on workstation INT4 ONNX; no model loaded |
 | H Agent (I1–I8) | [08-agent.md](08-agent.md) · design notes: [09-agent-i1-i2.md](09-agent-i1-i2.md), [09b-agent-i5-navigation.md](09b-agent-i5-navigation.md), [09c-agent-i3-i4.md](09c-agent-i3-i4.md) | each I* ticket’s gate; LLM never PWM |
 | I Memory | [09-memory.md](09-memory.md) | Chroma upsert/query + SQLite put/get |
 
