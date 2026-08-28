@@ -1,8 +1,10 @@
 """VL53L0X ranging on Linux I2C. Never opens motors or PWM.
 
 Adapted from the Pololu / Adafruit CircuitPython VL53L0X driver (MIT).
-Default on this Jetson: ``/dev/i2c-1`` address ``0x29``. The motor HAT stays
-on bus 7.
+Default on this Jetson: ``/dev/i2c-1`` address ``0x29`` — 40-pin pins 27 (SDA)
+and 28 (SCL), shared with the onboard FUSB301 at ``0x25`` and INA3221 at
+``0x40``. The motor HAT stays on bus 7, which is the *other* header pin pair
+(3 and 5), so PWM traffic never shares this bus.
 """
 
 from __future__ import annotations

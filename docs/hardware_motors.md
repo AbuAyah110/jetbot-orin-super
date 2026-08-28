@@ -10,7 +10,7 @@ Path: `jetbot/robot.py`, `jetbot/motor.py`
 | --- | --- |
 | Interface | Adafruit Motor HAT / PCA9685 via `Adafruit_MotorHAT` |
 | Alt board | SparkFun Serial Controlled Motor Driver (`qwiic`, addr `93`) |
-| Orin default I2C bus | **7** on this JetPack 6.2 board (40-pin SDA/SCL pins 3/5); onboard chips are on bus **1** |
+| Orin default I2C bus | **7** on this JetPack 6.2 board (40-pin SDA/SCL pins 3/5); bus **1** is header pins 27/28 plus onboard chips, and carries the VL53L0X ToF |
 | Orin preferred motor addr | **112 (`0x70`)**; fallback **96 (`0x60`)** |
 | Wheel sign | `right_motor_alpha = -1.0` so both wheels drive forward together |
 | API shape | `Robot.forward/backward/left/right/stop`, per-wheel `Motor.value` in `[-1, 1]` |

@@ -43,6 +43,22 @@ Pass: left then right twitch, then **stop**; timeout path also stops. Leave `con
 | 7 | `0x3c`, `0x60`, `0x70` | Classic JetBot HAT: `0x70`/`0x60` PCA9685, `0x3c` OLED. |
 | 1 (2026-08-28) | `UU` @ `0x25`, `UU` @ `0x40`, **`0x29`** | Front **VL53L0X** ToF (model id `0xEE`). Motors stay on bus 7. |
 
+### Both buses are on the 40-pin header
+
+Bus 1 and bus 7 are two different pin pairs on the same header, so "not on bus 7"
+does not mean "not on the header". Confirmed on this board from
+`/sys/class/i2c-dev` and `/proc/device-tree/bus@0`:
+
+| Device node | Controller | 40-pin pins | What lives there |
+| --- | --- | --- | --- |
+| `/dev/i2c-1` | `c240000.i2c` | 27 SDA / 28 SCL | Onboard `fusb301@25` and `ina3221@40` (the two `UU`), plus the **VL53L0X @ `0x29`** |
+| `/dev/i2c-7` | `c250000.i2c` | 3 SDA / 5 SCL | Motor HAT `0x70`/`0x60` and OLED `0x3c` |
+
+The ToF is therefore wired to pins 27/28 and shares bus 1 with two onboard
+chips. Do not move it to pins 3/5: that is the motor HAT's bus, and this project
+keeps ranging off the bus that carries PWM traffic. `i2cget -y 7 0x29` failing is
+the expected result, not a wiring fault.
+
 Probe ranging (no PWM):
 
 ```bash
