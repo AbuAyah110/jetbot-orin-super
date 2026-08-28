@@ -82,6 +82,28 @@ def test_warmup_stops_early_when_the_sensor_stalls():
     assert camera._drain_warmup() == 3
 
 
+def test_settle_discards_frames_shot_while_the_chassis_moved():
+    """The path gate refuses blurred views, so post-motion frames get dropped."""
+    camera = CsiJpeg448()
+    camera._appsink = FakeAppsink()
+    ticks = iter([0.0] + [i * 0.1 for i in range(1, 100)])
+    clock = lambda: next(ticks)  # noqa: E731
+
+    assert camera.settle(seconds=0.6, now=clock) > 0
+
+
+def test_settle_is_a_no_op_when_the_camera_is_closed():
+    # Callers gate on motion, not on camera state.
+    assert CsiJpeg448().settle() == 0
+
+
+def test_settle_stops_early_when_the_sensor_stalls():
+    camera = CsiJpeg448()
+    camera._appsink = FakeAppsink(available=2)
+
+    assert camera.settle() == 2
+
+
 def test_log_executor_never_moves():
     exe = LogOnlyExecutor()
     exe.execute(parse_action('{"action":"drive","vx":0.2,"wz":0.5}'))

@@ -53,6 +53,9 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | One-process scaffold | Parser/camera/prompts + look-then-log resident loader | `pytest tests/unit/test_look_then_log.py` |
 | Robot integration | **Talk-and-drive live** — VAD listen, no beep; PWM via `jetbot.Robot` | `scripts/bringup/talk_and_drive.py` |
 | Conversation | **Live** — general Q&A, fresh-frame visual follow-ups, five-exchange persistent text memory | [12-natural-conversation.md](docs/bringup/12-natural-conversation.md) |
+| Motion request routing | **Fixed** — motion verbs veto parked question routes; speak-only replies can no longer claim movement | [12-natural-conversation.md](docs/bringup/12-natural-conversation.md) |
+| Go-around detour | **Partial** — colour-grounded targets only; honest refusal otherwise | `scripts/bringup/talk_and_drive.py` |
+| Monocular path gate | **Does not work** — every prompt wording is a constant; blocked on ToF/bumper | `scripts/bringup/probe_path_gate.py` |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
 | Memory | **Live** — 32.5 MiB CPU INT8 BGE, LanceDB float16 vectors, explicit teach + restart recall passed | [09-memory.md](docs/bringup/09-memory.md) |
 

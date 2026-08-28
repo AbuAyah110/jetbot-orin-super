@@ -131,6 +131,35 @@ _SEARCH_PATTERN = re.compile(
     r')\s+(?:me\s+)?(?P<target>.+)$'
 )
 
+# A motion verb at the head of the utterance means the speaker asked for
+# movement, whatever else the sentence contains. Parked question routes must
+# defer to it: "move around the object in front of you" contains the literal
+# substring "object in front", which matched _VISUAL_QUESTION_PATTERN and got
+# answered with speech while the wheels never turned.
+_MOTION_VERB = (
+    r'(?:move|go|drive|turn|navigate|steer|roll|head|reverse|back\s+up'
+    r'|circle|orbit|swing|walk)'
+)
+_MOTION_COMMAND_PATTERN = re.compile(r'^' + _MOTION_VERB + r'\b')
+
+# Detour requests ("go around the box"). These are movement, not conversation,
+# and they are not an approach: the goal is to pass the object rather than
+# close on it.
+_AROUND_PATTERNS = (
+    re.compile(
+        _MOTION_VERB + r'\s+(?:all\s+the\s+way\s+)?(?:around|round|past)\s+'
+        r'(?P<target>.+)$'
+    ),
+    re.compile(r'\b(?:circle|orbit)\s+(?P<target>.+)$'),
+)
+# "the object in front of you" names the object; the locative is not part of
+# the name and must not reach TTS or the detector prompt.
+_TARGET_TRAILERS = (
+    re.compile(r'\s+(?:that\s+is\s+|which\s+is\s+)?in\s+front\s+of\s+(?:you|me|us)$'),
+    re.compile(r'\s+(?:on|to)\s+(?:your|the|my)\s+(?:left|right)$'),
+    re.compile(r'\s+(?:please|for\s+me|now)$'),
+)
+
 _REMEMBER_PATTERN = re.compile(
     r"\b(?:remember(?:\s+that)?|(?:please\s+)?remember|"
     r"don't\s+forget(?:\s+that)?)\s+(?P<fact>.+)$"
@@ -144,15 +173,33 @@ def normalize_transcript(text: str) -> str:
     return ' '.join(cleaned.split())
 
 
+def strip_politeness(speech: str) -> str:
+    """Remove leading requests and trailing filler from a normalized string."""
+    speech = _POLITE_PREFIX.sub('', speech)
+    speech = _POLITE_SUFFIX.sub('', speech)
+    speech = re.sub(r'^(?:' + _FILLER + r'\s+)*', '', speech)
+    speech = re.sub(r'(?:\s+' + _FILLER + r')*$', '', speech)
+    return speech.strip()
+
+
+def is_motion_command(text: str) -> bool:
+    """True when a motion verb leads the utterance.
+
+    Used as a veto on the parked question routes so a drive request can never
+    be satisfied with speech alone.
+    """
+    speech = strip_politeness(normalize_transcript(text))
+    if not speech:
+        return False
+    return bool(_MOTION_COMMAND_PATTERN.match(speech))
+
+
 def match_intent(text: str) -> Optional[str]:
     """Return an intent only when the whole transcript is a bare direction."""
     speech = normalize_transcript(text)
     if not speech:
         return None
-    speech = _POLITE_PREFIX.sub('', speech)
-    speech = _POLITE_SUFFIX.sub('', speech)
-    speech = re.sub(r'^(?:' + _FILLER + r'\s+)*', '', speech)
-    speech = re.sub(r'(?:\s+' + _FILLER + r')*$', '', speech)
+    speech = strip_politeness(speech)
     for intent, pattern in _INTENT_PATTERNS:
         # ASR commonly repeats a complete phrase. Repeats are accepted only
         # when every repeated segment resolves to the same bare command.
@@ -185,11 +232,38 @@ def is_plan_preview_request(text: str) -> bool:
 
 
 def is_visual_question(text: str) -> bool:
-    """True for parked questions that require a fresh camera frame."""
+    """True for parked questions that require a fresh camera frame.
+
+    A motion command is never a visual question, even when it mentions an
+    object and its position.
+    """
     speech = normalize_transcript(text)
-    if not speech:
+    if not speech or is_motion_command(speech):
         return False
     return bool(_VISUAL_QUESTION_PATTERN.search(speech))
+
+
+def around_target(text: str) -> str:
+    """Return the object a detour was requested around, or an empty string."""
+    speech = strip_politeness(normalize_transcript(text))
+    if not speech:
+        return ''
+    for pattern in _AROUND_PATTERNS:
+        match = pattern.search(speech)
+        if match is None:
+            continue
+        target = match.group('target')
+        for trailer in _TARGET_TRAILERS:
+            target = trailer.sub('', target)
+        target = re.sub(r'^(?:a|an|the)\s+', '', target).strip()
+        if target:
+            return target[:48]
+    return ''
+
+
+def is_around_request(text: str) -> bool:
+    """True for a bounded detour past an object, distinct from approaching it."""
+    return bool(around_target(text))
 
 
 def search_target(text: str) -> str:

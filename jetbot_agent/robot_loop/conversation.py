@@ -7,12 +7,49 @@ turn an open-ended question into movement.
 
 from __future__ import annotations
 
+import re
 from typing import Optional, Protocol
 
 from jetbot_agent.robot_loop.actions import RobotAction, parse_action
 
 CONVERSATION_MAX_TOKENS = 80
 CONVERSATION_FALLBACK = "I couldn't form a safe answer. Please ask me again."
+MOTION_CLAIM_REPLY = (
+    "I can't do that move. I can go forward or back, turn, or approach or go "
+    'around something I can see.'
+)
+
+# This route cannot reach the motors, so a first-person motion claim is always
+# false. Asked to "move around the object in front of you", Cosmos answered
+# "Sure, I am moving around it now" from a parked turn and nothing moved.
+_MOTION_VERBS = (
+    r'(?:mov(?:e|ed|ing)|driv(?:e|ing)|drove|turn(?:ed|ing)?|rotat(?:e|ed|ing)'
+    r'|circl(?:e|ed|ing)|orbit(?:ed|ing)?|navigat(?:e|ed|ing)|head(?:ed|ing)'
+    r'|roll(?:ed|ing)|proceed(?:ed|ing)?|steer(?:ed|ing)?'
+    r'|go(?:ing)?\s+around|went\s+around)'
+)
+_MOTION_CLAIM_PATTERNS = (
+    # First person: "I am moving around it", "I've circled the object".
+    re.compile(
+        r"\b(?:i|i'?m|im|i'?ll|i\s+am|i\s+will|i\s+have|i'?ve)\b[^.!?]{0,24}?"
+        r'\b' + _MOTION_VERBS + r'\b',
+        re.IGNORECASE,
+    ),
+    # Bare acknowledgement with the subject dropped: "Okay, turning around it
+    # now." This is the shape of a real motion ack, so it reads as one.
+    re.compile(
+        r'^\W*(?:okay|ok|sure|alright|right|yes|yep)?[\s,.!-]*'
+        + _MOTION_VERBS
+        + r'\b',
+        re.IGNORECASE,
+    ),
+)
+
+
+def claims_motion(say: str) -> bool:
+    """True when a spoken reply asserts the robot is or was moving."""
+    text = say or ''
+    return any(pattern.search(text) for pattern in _MOTION_CLAIM_PATTERNS)
 
 CONVERSATION_SYSTEM_PROMPT = """You are JetBot, a friendly conversational robot.
 Answer the user's question directly and naturally. Use the short conversation
@@ -27,8 +64,13 @@ relevant to the latest question and prefer the user's latest statement when it
 conflicts with an older memory.
 
 Motion commands are handled by a separate safety controller. For this turn you
-must never request drive, velocity, motors, PWM, or tools. Reply with exactly
-one compact JSON object:
+must never request drive, velocity, motors, PWM, or tools. You are parked and
+cannot move, so never say that you are moving, turning, driving, going around
+something, or that you have started or finished a movement. If the user asked
+for a move you cannot perform, say plainly that you cannot do it and name what
+you can do: go forward or back, turn left or right, approach or go around an
+object you can see, look for an object, or describe your view.
+Reply with exactly one compact JSON object:
 {"action":"speak","vx":0,"wz":0,"duration_s":0,"say":"answer under 120 chars","goal":"","reason":"conversation"}
 No markdown, analysis, or text outside JSON. Keep say natural, complete, and
 under 120 characters."""
@@ -41,7 +83,8 @@ Answer naturally with useful visual details or an opinion clearly labeled as
 your impression. If the requested detail is hidden, blurry, absent, or
 uncertain, say so instead of inventing it.
 
-This turn can never move the robot. Reply with exactly one compact JSON object:
+This turn can never move the robot, so never say that you are moving, turning,
+driving, or going around anything. Reply with exactly one compact JSON object:
 {"action":"speak","vx":0,"wz":0,"duration_s":0,"say":"answer under 120 chars","goal":"","reason":"visual conversation"}
 No markdown, analysis, or text outside JSON. Keep say complete and under 120
 characters."""
@@ -115,6 +158,16 @@ def conversation_action(
             RobotAction(
                 kind="stop",
                 reason="conversation_non_speak",
+                raw_ok=True,
+            ),
+            raw,
+        )
+    if claims_motion(action.say):
+        return (
+            RobotAction(
+                kind="speak",
+                say=MOTION_CLAIM_REPLY,
+                reason="conversation_motion_claim",
                 raw_ok=True,
             ),
             raw,

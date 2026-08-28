@@ -17,9 +17,12 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     NUDGE_DURATION_S,
     NUDGE_VX,
     ack_phrase,
+    around_target,
     intent_action,
     intent_wheels,
+    is_around_request,
     is_describe_request,
+    is_motion_command,
     is_plan_preview_request,
     is_search_request,
     is_visual_question,
@@ -304,6 +307,65 @@ def test_plan_preview_questions_are_recognized(transcript):
 )
 def test_execution_and_description_are_not_plan_previews(transcript):
     assert is_plan_preview_request(transcript) is False
+
+
+@pytest.mark.parametrize(
+    'transcript, target',
+    [
+        ('MOVE AROUND THE OBJECT IN FRONT OF YOU', 'object'),
+        ('GO AROUND THE OBJECT IN FRONT OF YOU', 'object'),
+        ('MOVE AROUND THE BOX', 'box'),
+        ('DRIVE AROUND THE OBJECT', 'object'),
+        ('GO ALL THE WAY AROUND THE RED OBJECT', 'red object'),
+        ('CIRCLE THE CHAIR', 'chair'),
+        ('PLEASE GO AROUND THE BOX ON YOUR LEFT', 'box'),
+    ],
+)
+def test_around_requests_are_recognized_as_movement(transcript, target):
+    assert is_around_request(transcript) is True
+    assert around_target(transcript) == target
+    # A detour must not be answered by a parked speech-only route.
+    assert is_visual_question(transcript) is False
+    assert is_describe_request(transcript) is False
+    assert is_plan_preview_request(transcript) is False
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    ['', 'MOVE FORWARD', 'WHAT DO YOU SEE', 'MOVE TOWARD THE BLUE OBJECT'],
+)
+def test_plain_commands_are_not_detours(transcript):
+    assert is_around_request(transcript) is False
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        # Each names an object and its position, which used to be enough to
+        # match the visual-question pattern and swallow the drive request.
+        'MOVE AROUND THE OBJECT IN FRONT OF YOU',
+        'GO PAST THE OBJECT ON THE LEFT',
+        'DRIVE TOWARD THE OBJECT IN FRONT',
+        'TURN TO THE OBJECT ON THE RIGHT',
+    ],
+)
+def test_motion_commands_are_never_visual_questions(transcript):
+    assert is_motion_command(transcript) is True
+    assert is_visual_question(transcript) is False
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        'WHAT COLOR IS IT',
+        'WHAT IS THAT',
+        'TELL ME ABOUT THE OBJECT YOU SEE',
+        'WHERE IS THE RED OBJECT',
+    ],
+)
+def test_questions_are_not_motion_commands(transcript):
+    assert is_motion_command(transcript) is False
+    assert is_visual_question(transcript) is True
 
 
 def test_ack_phrases_are_short_enough_to_speak():

@@ -21,6 +21,15 @@ from talk_and_drive import (  # noqa: E402
     UNDERSTAND_FAIL_PHRASE,
     TalkDriveExecutor,
     _target_phrase,
+    AROUND_FORWARD_DURATION_S,
+    AROUND_MAX_SWING_TURNS,
+    AROUND_PASS_PULSES,
+    AROUND_TURN_DURATION_S,
+    around_forward_action,
+    around_turn_action,
+    color_corridor_clear,
+    detour_side_for,
+    opposite_side,
     asr_transcript_usable,
     collapse_repeats,
     camera_path_clear,
@@ -291,6 +300,112 @@ def test_camera_path_gate_fails_closed():
     assert camera_path_clear(Runtime('{"clear":false}'), b'jpeg')[0] is False
     assert camera_path_clear(Runtime('uncertain'), b'jpeg')[0] is False
     assert camera_path_clear(Runtime('{"clear":"probably"}'), b'jpeg')[0] is False
+
+
+@pytest.mark.parametrize(
+    'target_side, expected',
+    [('right', 'left'), ('left', 'right'), ('center', 'right')],
+)
+def test_detour_passes_on_the_side_away_from_the_object(target_side, expected):
+    assert detour_side_for(target_side) == expected
+
+
+@pytest.mark.parametrize('side, expected', [('left', 'right'), ('right', 'left')])
+def test_detour_realigns_by_turning_back_the_other_way(side, expected):
+    assert opposite_side(side) == expected
+
+
+def _solid_jpeg(rgb, size=64, patch=None):
+    """Encode a plain frame, optionally with a coloured patch, for the corridor."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    image = Image.new('RGB', (size, size), rgb)
+    if patch is not None:
+        box, colour = patch
+        Image.Image.paste(image, Image.new('RGB', (box[2], box[3]), colour), box[:2])
+    buffer = BytesIO()
+    image.save(buffer, format='JPEG', quality=95)
+    return buffer.getvalue()
+
+
+def test_corridor_is_clear_when_the_colour_is_absent():
+    jpeg = _solid_jpeg((90, 90, 90))
+
+    clear, evidence = color_corridor_clear(jpeg, 'red object')
+
+    assert clear is True
+    assert evidence['visible'] is False
+
+
+def test_corridor_is_blocked_while_the_target_sits_dead_ahead():
+    # A compact saturated patch in the middle third is the target in the path.
+    jpeg = _solid_jpeg((40, 40, 40), patch=((26, 20, 12, 24), (255, 20, 20)))
+
+    clear, evidence = color_corridor_clear(jpeg, 'red object')
+
+    assert evidence['side'] == 'center'
+    assert clear is False
+
+
+def test_corridor_is_clear_once_the_target_has_swung_off_to_one_side():
+    jpeg = _solid_jpeg((40, 40, 40), patch=((2, 20, 12, 24), (255, 20, 20)))
+
+    clear, evidence = color_corridor_clear(jpeg, 'red object')
+
+    assert evidence['side'] == 'left'
+    assert clear is True
+
+
+def test_corridor_fails_closed_when_the_target_fills_the_frame():
+    # Point-blank range looks like "colour everywhere", which locate_color
+    # rejects. Reading that rejection as "gone" would drive straight into it.
+    jpeg = _solid_jpeg((255, 20, 20))
+
+    clear, evidence = color_corridor_clear(jpeg, 'red object')
+
+    assert evidence['visible'] is False
+    assert evidence['rejected'] == 'covers_too_much_of_frame'
+    assert clear is False
+
+
+def test_corridor_fails_closed_for_a_target_it_cannot_ground():
+    clear, evidence = color_corridor_clear(_solid_jpeg((90, 90, 90)), 'bottle')
+
+    assert evidence['rejected'] == 'unsupported_target'
+    assert clear is False
+
+
+def test_detour_swing_and_pass_counts_stay_bounded():
+    # The swing loop is camera-gated, so its only hard stop is this cap.
+    assert 0 < AROUND_MAX_SWING_TURNS <= 4
+    assert 0 < AROUND_PASS_PULSES <= 2
+    longest_run_s = (
+        (AROUND_MAX_SWING_TURNS * 2) * AROUND_TURN_DURATION_S
+        + (AROUND_PASS_PULSES + 1) * AROUND_FORWARD_DURATION_S
+    )
+    assert longest_run_s < 6.0
+
+
+@pytest.mark.parametrize('direction, sign', [('left', 1.0), ('right', -1.0)])
+def test_detour_turn_uses_measured_duty_in_the_requested_direction(direction, sign):
+    turn = around_turn_action(direction)
+
+    assert turn.kind == 'drive'
+    assert turn.vx == 0.0
+    assert turn.wz * sign > 0.0
+    assert abs(turn.wz) <= LIVE_WZ_MAX
+    assert 0.0 < turn.duration_s < LIVE_DURATION_MAX_S
+
+
+def test_detour_forward_leg_is_short_and_straight():
+    leg = around_forward_action()
+
+    assert leg.kind == 'drive'
+    assert leg.wz == 0.0
+    assert 0.0 < leg.vx <= LIVE_VX_MAX
+    assert 0.0 < leg.duration_s <= 0.5
 
 
 def test_search_motion_is_short_and_bounded():

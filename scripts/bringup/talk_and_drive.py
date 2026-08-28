@@ -77,7 +77,10 @@ from jetbot_agent.robot_loop.approach_plan import (  # noqa: E402
     verification_is_safe,
 )
 from jetbot_agent.robot_loop.csi_jpeg import CsiJpeg448  # noqa: E402
-from jetbot_agent.robot_loop.color_grounding import locate_color  # noqa: E402
+from jetbot_agent.robot_loop.color_grounding import (  # noqa: E402
+    locate_color,
+    target_color,
+)
 from jetbot_agent.robot_loop.conversation import (  # noqa: E402
     CONVERSATION_FALLBACK,
     conversation_action,
@@ -90,7 +93,9 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     NUDGE_DURATION_S,
     NUDGE_VX,
     ack_phrase,
+    around_target,
     intent_action,
+    is_around_request,
     is_describe_request,
     is_plan_preview_request,
     is_search_request,
@@ -160,6 +165,13 @@ DESCRIBE_FAIL_PHRASE = "I couldn't tell what I'm looking at"
 SEARCH_MAX_VIEWS = 6
 SEARCH_TURN_DURATION_S = 0.35
 SEARCH_RELOCATE_DURATION_S = 0.40
+AROUND_TURN_DURATION_S = 0.35
+AROUND_FORWARD_DURATION_S = 0.45
+# Degrees per turn pulse are not calibrated yet, so the detour cannot swing out
+# by a computed angle. It swings in short pulses until the camera gate reports
+# the forward path clear, which uses the sensor we actually have.
+AROUND_MAX_SWING_TURNS = 4
+AROUND_PASS_PULSES = 2
 
 
 def clamp_test_action(action: RobotAction) -> RobotAction:
@@ -467,10 +479,19 @@ def verify_visual_target(
 
 
 def camera_path_clear(runtime, jpeg: bytes) -> tuple[bool, str]:
-    """Conservative monocular gate for one short forward search pulse.
+    """Ask Cosmos whether the floor ahead is clear. Not a sensor.
 
-    This is provisional obstacle avoidance, not depth or contact sensing. Any
-    malformed or uncertain answer is blocked.
+    Measured with ``scripts/bringup/probe_path_gate.py`` on four saved frames
+    (two empty floor, two with a bottle filling the view): this wording answers
+    ``false`` on 4/4, and a permissively worded variant answers ``true`` on 4/4
+    including the blocked frames. Asked to *name* what is on the floor instead,
+    the model returned "detector" and "path_gate" -- words from its own system
+    prompt -- and called the blocked frames "floor". Cosmos-Reason2-2B at 448
+    square does not perceive near-field floor obstacles at all here.
+
+    It is therefore retained only where a ``false`` answer means "skip an
+    optional move". Never build a maneuver whose safety depends on it; use
+    :func:`color_corridor_clear` or wait for the ToF/bumper hardware.
     """
     prompt = (
         'The robot is stopped. Inspect the current image only. Is the floor '
@@ -517,6 +538,63 @@ def search_forward_action() -> RobotAction:
         reason='camera_search_relocate',
         raw_ok=True,
     )
+
+
+def around_turn_action(direction: str) -> RobotAction:
+    """One short in-place turn for a detour leg."""
+    sign = 1.0 if direction == 'left' else -1.0
+    return RobotAction(
+        kind='drive',
+        vx=0.0,
+        wz=sign * NUDGE_VX / WZ_WHEEL_SCALE,
+        duration_s=AROUND_TURN_DURATION_S,
+        reason='around_turn_{0}'.format(direction),
+        raw_ok=True,
+    )
+
+
+def around_forward_action() -> RobotAction:
+    """One short straight leg of a detour, only after camera_path_clear()."""
+    return RobotAction(
+        kind='drive',
+        vx=NUDGE_VX,
+        wz=0.0,
+        duration_s=AROUND_FORWARD_DURATION_S,
+        reason='around_forward',
+        raw_ok=True,
+    )
+
+
+def detour_side_for(target_side: str) -> str:
+    """Pass on the side with more free space: away from where the object sits."""
+    return 'left' if target_side == 'right' else 'right'
+
+
+def opposite_side(side: str) -> str:
+    return 'right' if side == 'left' else 'left'
+
+
+# A rejection that means "the colour filled the frame" cannot be read as "the
+# object is gone": that is exactly what a target at point-blank range looks
+# like. Only a genuine absence of matching pixels clears the corridor.
+_CORRIDOR_BLOCKERS = frozenset(
+    {'covers_too_much_of_frame', 'decode_failed', 'unsupported_target'}
+)
+
+
+def color_corridor_clear(jpeg: bytes, target: str) -> tuple[bool, dict]:
+    """True when the named coloured target is out of the forward corridor.
+
+    Deterministic pixel arithmetic, unlike :func:`camera_path_clear`. It knows
+    only about the named target and cannot see any other obstacle, which is why
+    the detour built on it stays short.
+    """
+    evidence = locate_color(jpeg, target)
+    if evidence.rejected in _CORRIDOR_BLOCKERS:
+        return False, evidence.as_dict()
+    if evidence.visible and evidence.side == 'center':
+        return False, evidence.as_dict()
+    return True, evidence.as_dict()
 
 
 def recover_cosmos_fields(action: RobotAction, model_text: str) -> RobotAction:
@@ -1873,6 +1951,162 @@ def main() -> int:
                 executor.execute(action)
                 executor.hard_stop()
                 record_turn(speech, ack or 'Command completed')
+                if args.once is not None:
+                    break
+                continue
+
+            # "Go around the box" is a detour, not an approach: the goal is to
+            # pass the object rather than close on it. This phrasing used to
+            # fall through to the speak-only conversation route, which
+            # acknowledged the command while the wheels never turned.
+            if is_around_request(speech):
+                executor.hard_stop()
+                target = around_target(speech) or 'that'
+                if camera is None:
+                    record_turn(speech, VISION_UNAVAILABLE_PHRASE)
+                    if tts is not None:
+                        speak_short(tts, VISION_UNAVAILABLE_PHRASE, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+                swings = 0
+                pulses = 0
+                abort_reason = ''
+                detour = ''
+                target_side = ''
+                evidence: dict = {}
+
+                def corridor_now(phase: str) -> bool:
+                    """Settled fresh frame, then deterministic pixel evidence.
+
+                    The settle matters: a frame pulled straight after a turn is
+                    motion-blurred, which washes out the colour dominance the
+                    corridor check measures.
+                    """
+                    camera.settle()
+                    leg_jpeg, _ = capture_current_frame(speech, phase)
+                    clear, detail = color_corridor_clear(leg_jpeg, target)
+                    print('around_corridor', json.dumps(detail), flush=True)
+                    return clear
+
+                try:
+                    # Cosmos cannot judge near-field geometry (see
+                    # camera_path_clear), so a detour is only offered for
+                    # targets that pixel colour grounding can actually track.
+                    if not target_color(target):
+                        abort_reason = 'target_not_colour_grounded'
+                    else:
+                        jpeg, frame_path = capture_current_frame(
+                            speech, 'around_locate'
+                        )
+                        located = locate_color(jpeg, target)
+                        evidence = located.as_dict()
+                        print('around_locate_colour', json.dumps(evidence), flush=True)
+                        if not located.visible:
+                            abort_reason = 'target_not_located'
+                        else:
+                            target_side = located.side
+                            detour = detour_side_for(target_side)
+                            briefing = (
+                                'Going around the {0} on my {1}. Short pulses, '
+                                'and I stop if I lose track of it.'
+                            ).format(target, detour)
+                            if tts is not None:
+                                speak_short(
+                                    tts, briefing, playback, wav_dir, max_chars=120
+                                )
+
+                            # Swing away until the target's pixels leave the
+                            # centre corridor. Turn angle per pulse is not
+                            # calibrated, so the camera decides when to stop.
+                            while True:
+                                if stop_requested:
+                                    abort_reason = 'stop_requested'
+                                    break
+                                if corridor_now('around_swing_{0}'.format(swings)):
+                                    break
+                                if swings >= AROUND_MAX_SWING_TURNS:
+                                    abort_reason = 'never_cleared'
+                                    break
+                                executor.execute(around_turn_action(detour))
+                                executor.hard_stop()
+                                swings += 1
+
+                            # Pass the object along the swung-out heading,
+                            # re-checking the corridor before each pulse.
+                            while not abort_reason and pulses < AROUND_PASS_PULSES:
+                                if stop_requested:
+                                    abort_reason = 'stop_requested'
+                                    break
+                                if pulses and not corridor_now(
+                                    'around_pass_{0}'.format(pulses)
+                                ):
+                                    abort_reason = 'target_back_in_path'
+                                    break
+                                executor.execute(around_forward_action())
+                                executor.hard_stop()
+                                pulses += 1
+
+                            # Turning back by the same pulse count restores the
+                            # original heading without needing odometry.
+                            if not abort_reason:
+                                for _ in range(swings):
+                                    if stop_requested:
+                                        abort_reason = 'stop_requested'
+                                        break
+                                    executor.execute(
+                                        around_turn_action(opposite_side(detour))
+                                    )
+                                    executor.hard_stop()
+                except Exception as exc:
+                    abort_reason = 'around_failed:{0}'.format(type(exc).__name__)
+                    print('around_maneuver_failed', exc, file=sys.stderr, flush=True)
+                finally:
+                    executor.hard_stop()
+                if abort_reason == 'target_not_colour_grounded':
+                    reply = (
+                        "I can only go around a red, blue or green object. I "
+                        "have no distance sensor, so I won't drive blind."
+                    )
+                elif abort_reason == 'target_not_located':
+                    reply = "I can't see the {0}, so I won't try to go around it.".format(
+                        target
+                    )
+                elif abort_reason == 'never_cleared':
+                    reply = (
+                        'I turned but the {0} stayed in my path, so I stopped.'
+                    ).format(target)
+                elif abort_reason == 'target_back_in_path':
+                    reply = 'The {0} came back into my path, so I stopped.'.format(
+                        target
+                    )
+                elif abort_reason:
+                    reply = 'I stopped the detour early and parked.'
+                else:
+                    reply = 'I stepped around the {0} on my {1} and stopped.'.format(
+                        target, detour
+                    )
+                record_turn(speech, reply)
+                print(
+                    json.dumps(
+                        {
+                            'route': 'around_detour',
+                            'speech': speech,
+                            'target': target,
+                            'target_side': target_side,
+                            'detour_side': detour,
+                            'swing_turns': swings,
+                            'forward_pulses': pulses,
+                            'abort_reason': abort_reason,
+                            'colour_evidence': evidence,
+                            'reply': reply,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(tts, reply, playback, wav_dir, max_chars=120)
                 if args.once is not None:
                     break
                 continue

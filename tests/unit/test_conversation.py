@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from jetbot_agent.robot_loop.conversation import (
     CONVERSATION_FALLBACK,
     CONVERSATION_MAX_TOKENS,
+    MOTION_CLAIM_REPLY,
     build_conversation_prompt,
+    claims_motion,
     conversation_action,
 )
 
@@ -158,3 +162,55 @@ def test_visual_follow_up_admits_uncertainty():
 
     assert action.kind == 'speak'
     assert 'cannot tell' in action.say
+
+
+@pytest.mark.parametrize(
+    'say',
+    [
+        'Sure, I am moving around the object now.',
+        "I'm going around it to the left.",
+        'I will drive around the box for you.',
+        'I have moved around the chair.',
+        'Okay, turning around it now.',
+        "I've circled the object.",
+    ],
+)
+def test_spoken_motion_claims_are_replaced_with_an_honest_refusal(say):
+    # This route cannot reach the motors, so any first-person motion claim is
+    # a false report of movement the robot never performed.
+    assert claims_motion(say) is True
+    runtime = FakeRuntime(
+        '{"action":"speak","vx":0,"wz":0,"duration_s":0,'
+        '"say":"' + say + '","goal":"","reason":"conversation"}'
+    )
+
+    action, _ = conversation_action(runtime, 'move around the object')
+
+    assert action.kind == 'speak'
+    assert action.say == MOTION_CLAIM_REPLY
+    assert action.reason == 'conversation_motion_claim'
+
+
+@pytest.mark.parametrize(
+    'say',
+    [
+        'Saturn is the sixth planet from the Sun.',
+        'I see a blue box on my left.',
+        "I can't sense contact, so I won't try that.",
+        'That was a moving story about a train.',
+        'I do not know the answer to that.',
+    ],
+)
+def test_ordinary_answers_are_not_treated_as_motion_claims(say):
+    assert claims_motion(say) is False
+
+
+def test_conversation_prompt_forbids_claiming_movement():
+    runtime = FakeRuntime(
+        '{"action":"speak","vx":0,"wz":0,"duration_s":0,'
+        '"say":"I cannot do that move.","goal":"","reason":"conversation"}'
+    )
+
+    conversation_action(runtime, 'move around the object')
+
+    assert 'never say that you are moving' in runtime.calls[0]['system']

@@ -19,6 +19,11 @@ _CAPTURE_HEIGHT = 720
 # side it is on. Discard frames until exposure settles.
 DEFAULT_WARMUP_S = 2.5
 _WARMUP_PULL_TIMEOUT_NS = 2_000_000_000
+# A frame pulled immediately after a motion pulse is motion-blurred and its
+# exposure is still re-adapting. The monocular path gate is instructed to refuse
+# blurred or uncertain views, so measured indoors it rejected a genuinely empty
+# floor on 4 of 4 post-turn frames. Let the sensor settle before deciding.
+DEFAULT_SETTLE_S = 0.6
 
 
 class CsiJpeg448:
@@ -110,6 +115,26 @@ class CsiJpeg448:
                 break
             dropped += 1
         self.warmup_frames_dropped = dropped
+        return dropped
+
+    def settle(self, seconds: float = DEFAULT_SETTLE_S, now=None) -> int:
+        """Discard frames shot while the chassis was still moving.
+
+        Call after a motion pulse and before a frame that a decision depends
+        on. Does nothing when the pipeline is closed, so callers do not need to
+        know whether the camera is open.
+        """
+        if self._appsink is None or seconds <= 0:
+            return 0
+        import time as _time
+
+        clock = now or _time.monotonic
+        deadline = clock() + float(seconds)
+        dropped = 0
+        while clock() < deadline:
+            if self._appsink.emit('try-pull-sample', _WARMUP_PULL_TIMEOUT_NS) is None:
+                break
+            dropped += 1
         return dropped
 
     def capture_jpeg(self, timeout_ns: int = 5_000_000_000) -> bytes:
