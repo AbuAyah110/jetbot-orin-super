@@ -113,6 +113,19 @@ This split uses Cosmos for semantic and embodied decisions while keeping the
 physical safety boundary deterministic. Reasoning mode is intentionally not
 enabled during motion.
 
+Check a phrasing against the live model before trusting it on the robot. The
+probe routes motion to an in-memory cmd_vel sink, so nothing opens I2C or PWM:
+
+```bash
+.venv/bin/python scripts/bringup/probe_cosmos_tools.py \
+  'What can you actually do right now?' \
+  'Turn a bit so you are facing the doorway instead.' \
+  'Are you moving at the moment?'
+```
+
+Each line reports the chosen tool, its arguments, and the twists a real base
+would have received. `--deny-actuation` leaves only `nav_status` invocable.
+
 References:
 
 - [NVIDIA Cosmos Reason 2 prompt guide](https://nvidia-cosmos.github.io/cosmos-cookbook/getting_started/prompt_guide/reason_guide.html)
