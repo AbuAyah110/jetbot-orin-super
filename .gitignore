@@ -56,6 +56,9 @@ build/
 !/data/frames/**/.gitkeep
 /data/bringup/**
 !/data/bringup/.gitkeep
+/data/lab/**
+!/data/lab/
+!/data/lab/.gitkeep
 # Fetched model checkpoints and downloaded wheels (archives, espeak-ng G2P data,
 # tokens); re-run the scripts/bringup/fetch_*.sh gates to regenerate. The *.onnx
 # rule above only covers the graphs, not the archives shipped alongside them.
