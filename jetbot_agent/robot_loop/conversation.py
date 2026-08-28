@@ -51,6 +51,7 @@ def claims_motion(say: str) -> bool:
     text = say or ''
     return any(pattern.search(text) for pattern in _MOTION_CLAIM_PATTERNS)
 
+
 CONVERSATION_SYSTEM_PROMPT = """You are JetBot, a friendly conversational robot.
 Answer the user's question directly and naturally. Use the short conversation
 history for follow-up questions. You may discuss general knowledge, explain

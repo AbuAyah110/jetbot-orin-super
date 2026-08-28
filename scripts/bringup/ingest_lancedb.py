@@ -82,6 +82,13 @@ SEED_DOCUMENTS = [
         ),
         'kind': 'limitation',
     },
+    {
+        'id': 'backpack_couch',
+        'text': (
+            'A blue backpack is often by the couch; verify with the camera.'
+        ),
+        'kind': 'fact',
+    },
 ]
 
 

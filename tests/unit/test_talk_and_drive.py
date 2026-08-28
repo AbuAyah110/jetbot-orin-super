@@ -444,3 +444,23 @@ def test_search_motion_is_short_and_bounded():
     assert 0.0 < relocate.duration_s <= 0.4
     assert turn.duration_s < LIVE_DURATION_MAX_S
     assert relocate.duration_s < LIVE_DURATION_MAX_S
+
+
+def test_drive_toward_that_is_object_relative_and_deictic():
+    from jetbot_agent.robot_loop.intents import is_deictic_target
+    from talk_and_drive import object_relative_request
+
+    assert object_relative_request('DRIVE TOWARD THAT') is True
+    assert is_deictic_target('DRIVE TOWARD THAT') is True
+    assert is_deictic_target('move toward the red object') is False
+
+
+def test_creep_is_one_short_pulse():
+    from talk_and_drive import CREEP_DURATION_S, creep_forward_action
+
+    action = creep_forward_action()
+    assert action.kind == 'drive'
+    assert action.wz == 0.0
+    assert action.vx > 0.0
+    assert action.duration_s == pytest.approx(CREEP_DURATION_S)
+    assert action.duration_s < 1.0

@@ -5,7 +5,9 @@ import json
 from jetbot_agent.agent.cosmos_tool_agent import (
     AGENT_FALLBACK,
     AGENT_MAX_TOKENS,
+    AGENT_SYSTEM_PROMPT,
     CosmosToolAgent,
+    build_agent_prompt,
     compact_tool_catalog,
     parse_agent_decision,
 )
@@ -61,6 +63,7 @@ def test_direct_natural_answer_needs_no_tool():
     assert turn.calls == ()
     assert turn.failed is False
     assert runtime.calls[0]["max_tokens"] == AGENT_MAX_TOKENS
+    assert runtime.calls[0]["system"] == "You are a helpful assistant."
     assert "Why is Saturn interesting?" in runtime.calls[0]["user_text"]
     registry.close()
 
@@ -82,6 +85,7 @@ def test_model_calls_registry_tool_then_speaks_from_observation():
     second_prompt = runtime.calls[1]["user_text"]
     assert '"ok":true' in second_prompt
     assert "hello hello" in second_prompt
+    assert "No more tools may be called in this turn." in second_prompt
     registry.close()
 
 
@@ -148,8 +152,36 @@ def test_catalog_is_generated_only_from_invocable_tools():
     catalog = json.loads(compact_tool_catalog(registry))
     assert [tool["name"] for tool in catalog] == ["mock_echo"]
     assert catalog[0]["args"]["message"]["required"] is True
+    assert "description" in catalog[0]["args"]["message"]
     assert "pwm" not in json.dumps(catalog).lower()
     registry.close()
+
+
+def test_prompt_is_outcome_driven_and_egocentric_without_phrase_examples():
+    prompt = build_agent_prompt(
+        catalog="[]",
+        speech="Could you arrange yourself so you can see us better?",
+        history="user: We are by the doorway.",
+        has_image=True,
+    )
+    assert AGENT_SYSTEM_PROMPT == "You are a helpful assistant."
+    assert "desired outcome" in prompt
+    assert "Do not depend on memorized command phrases." in prompt
+    assert "current egocentric camera image is attached" in prompt
+    assert "a visible person is not\nJetBot" in prompt
+    assert "directions or an\nacknowledgement in a say response do not complete it" in prompt
+    assert "Could you arrange yourself so you can see us better?" in prompt
+
+
+def test_prompt_for_text_only_turn_forbids_camera_claims():
+    prompt = build_agent_prompt(
+        catalog="[]",
+        speech="What were we discussing?",
+        history="user: Saturn",
+        has_image=False,
+    )
+    assert "No camera image is attached" in prompt
+    assert "do not claim to see the scene" in prompt
 
 
 def test_tool_validation_error_becomes_observation_then_explanation():
@@ -174,7 +206,7 @@ def test_repeated_tool_requests_hit_step_limit_and_estop():
     turn = CosmosToolAgent(runtime, registry, max_steps=2).run("Keep stopping")
     assert turn.failed is True
     assert turn.reason == "step_limit"
-    assert len(turn.calls) == 2
-    # Two tool stops plus the registry fail-safe stop.
-    assert motion.commands == ("stop", "stop", "stop")
+    assert len(turn.calls) == 1
+    # One tool stop plus the registry fail-safe stop; duplicate actuation is blocked.
+    assert motion.commands == ("stop", "stop")
     registry.close()

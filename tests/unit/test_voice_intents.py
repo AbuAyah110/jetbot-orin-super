@@ -430,3 +430,49 @@ def test_behind_requests_still_count_as_motion_commands():
     # drive request with a sentence.
     assert is_motion_command('get behind the red object') is True
     assert is_visual_question('get behind the red object') is False
+
+
+def test_show_and_tell_and_creep_and_think_intents():
+    from jetbot_agent.robot_loop.intents import (
+        is_creep_request,
+        is_deictic_target,
+        is_show_and_tell,
+        is_think_request,
+        is_visual_question,
+    )
+
+    assert is_show_and_tell('WHAT AM I HOLDING') is True
+    assert is_show_and_tell('what is this object') is True
+    assert is_show_and_tell('move forward') is False
+    assert is_creep_request('If the floor is clear, creep forward') is True
+    assert is_creep_request('creep ahead') is True
+    assert is_think_request('Think hard whether that path is safe') is True
+    assert is_think_request('drive toward that') is False
+    assert is_deictic_target('DRIVE TOWARD THAT') is True
+    assert is_deictic_target('move toward the red object') is False
+    # Holding uses the JPEG-only route, not the RAG visual follow-up.
+    assert is_visual_question('what am I holding') is False or is_show_and_tell(
+        'what am I holding'
+    )
+
+
+def test_where_is_and_place_intents():
+    from jetbot_agent.robot_loop.intents import (
+        is_place_query,
+        is_place_teach,
+        is_where_request,
+        place_name,
+        place_query_name,
+        where_target,
+    )
+
+    assert is_where_request('Where is the blue backpack?') is True
+    assert where_target('Where is the blue backpack?') == 'blue backpack'
+    assert is_where_request('where is this') is False
+    assert is_place_teach('This view is the kitchen corner') is True
+    assert place_name('This view is the kitchen corner') == 'kitchen corner'
+    assert is_place_query('Are we at the kitchen corner?') is True
+    assert place_query_name('Are we at the kitchen corner') == 'kitchen corner'
+    assert is_place_query('is this the kitchen corner') is True
+    assert is_place_query('Are we at this') is False
+    assert is_place_query('is this a toy') is False

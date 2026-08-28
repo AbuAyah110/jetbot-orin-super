@@ -162,7 +162,7 @@ def test_orbit_aborts_before_closing_on_the_target():
         # abort that matters most.
         sighting = world.locate(phase)
         calls['n'] += 1
-        scale = 1 if calls['n'] == 1 else 3
+        scale = 1 if calls['n'] == 1 else 4
         return FakeSighting(
             visible=sighting.visible,
             center_x=sighting.center_x,

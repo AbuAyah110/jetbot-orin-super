@@ -52,6 +52,7 @@ for _extra_site in (
     if _extra_site.is_dir() and str(_extra_site) not in sys.path:
         sys.path.append(str(_extra_site))
 
+from jetbot_agent.hardware.vl53l0x import VL53L0X  # noqa: E402
 from jetbot_agent.hardware.audio_interface import (  # noqa: E402
     apply_safe_mixer_baseline,
     mixer_report,
@@ -78,8 +79,21 @@ from jetbot_agent.robot_loop.approach_plan import (  # noqa: E402
 )
 from jetbot_agent.robot_loop.csi_jpeg import CsiJpeg448  # noqa: E402
 from jetbot_agent.robot_loop.color_grounding import (  # noqa: E402
+    SUPPORTED_COLORS,
     locate_color,
     target_color,
+)
+from jetbot_agent.robot_loop.demos import (  # noqa: E402
+    CREEP_DURATION_S,
+    DEICTIC_REFUSE,
+    OCCUPANCY_REFUSE,
+    PLACE_UNSURE,
+    THINK_UNSAFE_FALLBACK,
+    eyes_first_reply,
+    occupancy_allows_creep,
+    place_compare_action,
+    place_slug,
+    think_action,
 )
 from jetbot_agent.robot_loop.conversation import (  # noqa: E402
     CONVERSATION_FALLBACK,
@@ -98,13 +112,24 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     intent_action,
     is_around_request,
     is_behind_request,
+    is_creep_request,
+    is_deictic_target,
     is_describe_request,
+    is_motion_command,
+    is_place_query,
+    is_place_teach,
     is_plan_preview_request,
     is_search_request,
+    is_show_and_tell,
+    is_think_request,
     is_visual_question,
+    is_where_request,
     match_intent,
     memory_fact,
+    place_name,
+    place_query_name,
     search_target,
+    where_target,
 )
 from jetbot_agent.robot_loop.memory_stubs import (  # noqa: E402
     LanceMemory,
@@ -215,6 +240,8 @@ _NOT_VISIBLE_MARKERS = (
 
 
 def object_relative_request(speech: str) -> bool:
+    if is_deictic_target(speech) and is_motion_command(speech):
+        return True
     return bool(
         re.search(
             r'\b(?:toward|towards|to|find|approach)\b.*\b(?:object|chair|door|person|box|target)\b',
@@ -434,6 +461,51 @@ def describe_scene(runtime, jpeg: bytes) -> tuple[str, str]:
     except Exception as exc:
         return '', 'describe_generate_failed:{0}'.format(type(exc).__name__)
     return clean_description(raw), raw
+
+
+def describe_held_object(runtime, jpeg: bytes) -> tuple[str, str]:
+    """Identify what is in this JPEG only. Never consults RAG or motors."""
+    prompt = (
+        'Look only at this image. The user is holding something in front of the '
+        'camera. Name it in one short sentence. If you cannot tell, say you cannot '
+        'tell. Do not use memory, old images, or motion. Plain English, no JSON, '
+        'no <think>.'
+    )
+    try:
+        raw = runtime.generate(
+            system=(
+                'You are the robot looking at one current camera frame. Answer from '
+                'this image only. Never emit JSON or wheel power.'
+            ),
+            user_text=prompt,
+            image_jpeg=jpeg,
+            max_tokens=DESCRIBE_MAX_TOKENS,
+        )
+    except Exception as exc:
+        return '', 'show_and_tell_failed:{0}'.format(type(exc).__name__)
+    return clean_description(raw), raw
+
+
+def creep_forward_action() -> RobotAction:
+    """One short forward pulse. Python stops after duration_s."""
+    return RobotAction(
+        kind='drive',
+        vx=NUDGE_VX,
+        wz=0.0,
+        duration_s=CREEP_DURATION_S,
+        reason='demo_creep',
+        raw_ok=True,
+    )
+
+
+def strongest_color_lock(jpeg: bytes):
+    """Best red/blue/green blob, or None. Deictic approach uses this lock."""
+    best = None
+    for color in SUPPORTED_COLORS:
+        found = locate_color(jpeg, color + ' object')
+        if found.visible and (best is None or found.pixels > best.pixels):
+            best = found
+    return best
 
 
 def verify_visual_target(
@@ -1277,6 +1349,7 @@ def prompt_user(once_text: Optional[str], mic_seconds: int) -> Optional[str]:
 
 def main() -> int:
     args = parse_args()
+    tof = None
     if args.smoke_stop:
         args.once = args.once or 'stop'
         args.skip_cosmos = True
@@ -1436,6 +1509,21 @@ def main() -> int:
             camera_error = str(exc)
             camera = None
             print('camera_open_failed', exc, file=sys.stderr, flush=True)
+
+    tof = None
+    tof_error = ''
+    try:
+        tof = VL53L0X()
+        print(
+            'tof_ready bus={0} addr={1:#x} revision={2:#x}'.format(
+                tof.bus_id, tof.address, tof.revision
+            ),
+            flush=True,
+        )
+    except Exception as exc:
+        tof_error = '{0}: {1}'.format(type(exc).__name__, exc)
+        tof = None
+        print('tof_open_failed', tof_error, file=sys.stderr, flush=True)
 
     stop_requested = False
     first_capture = True
@@ -1685,6 +1773,250 @@ def main() -> int:
                     break
                 continue
 
+            if is_place_teach(speech):
+                executor.hard_stop()
+                named = place_name(speech)
+                slug = place_slug(named)
+                if memory_store is None or not slug:
+                    reply = "My long-term memory isn't available right now."
+                else:
+                    try:
+                        memory_store.upsert(
+                            [
+                                {
+                                    'id': slug,
+                                    'text': 'This view is the {0}.'.format(named),
+                                    'kind': 'place',
+                                }
+                            ]
+                        )
+                        reply = "I'll remember this view as the {0}.".format(named)
+                    except Exception as exc:
+                        print(
+                            'place_teach_failed',
+                            type(exc).__name__,
+                            exc,
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        reply = "I couldn't save that place."
+                record_turn(speech, reply)
+                print(
+                    json.dumps(
+                        {
+                            'route': 'place_teach',
+                            'place': named,
+                            'id': slug,
+                            'reply': reply,
+                        }
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(tts, reply, playback, wav_dir)
+                if args.once is not None:
+                    break
+                continue
+
+            if is_place_query(speech):
+                executor.hard_stop()
+                named = place_query_name(speech)
+                slug = place_slug(named)
+                if camera is None:
+                    reply = VISION_UNAVAILABLE_PHRASE
+                    record_turn(speech, reply)
+                    if tts is not None:
+                        speak_short(tts, reply, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+                memory_text = ''
+                if memory_store is not None:
+                    try:
+                        hits = memory_store.query(named, k=4)
+                        place_hits = [
+                            hit for hit in hits if hit.get('kind') == 'place'
+                        ] or hits
+                        if slug:
+                            exact = [hit for hit in hits if hit.get('id') == slug]
+                            if exact:
+                                place_hits = exact
+                        memory_text = format_rag_context(place_hits) if place_hits else ''
+                    except Exception as exc:
+                        print(
+                            'place_query_failed',
+                            type(exc).__name__,
+                            exc,
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                try:
+                    jpeg, frame_path = capture_current_frame(speech, 'place_query')
+                    if memory_text:
+                        action, model_text = place_compare_action(
+                            runtime, jpeg, named, memory_text
+                        )
+                        reply = action.say or PLACE_UNSURE
+                    else:
+                        reply = "I don't have a saved description of the {0}.".format(
+                            named
+                        )
+                        model_text = ''
+                        frame_path = Path('')
+                except Exception as exc:
+                    print('place_query_camera_failed', exc, file=sys.stderr, flush=True)
+                    reply = VISION_UNAVAILABLE_PHRASE
+                    model_text = ''
+                    frame_path = Path('')
+                record_turn(speech, reply)
+                print(
+                    json.dumps(
+                        {
+                            'route': 'place_query',
+                            'place': named,
+                            'memory': memory_text[:240],
+                            'reply': reply,
+                            'frame': str(frame_path),
+                            'model_text': (model_text or '')[:400],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(tts, reply, playback, wav_dir, max_chars=120)
+                if args.once is not None:
+                    break
+                continue
+
+            if is_think_request(speech):
+                executor.hard_stop()
+                jpeg = None
+                frame_path = Path('')
+                if camera is not None:
+                    try:
+                        jpeg, frame_path = capture_current_frame(speech, 'think')
+                    except Exception as exc:
+                        print('think_camera_failed', exc, file=sys.stderr, flush=True)
+                action, model_text = think_action(runtime, speech, jpeg)
+                reply = action.say or THINK_UNSAFE_FALLBACK
+                record_turn(speech, reply)
+                print(
+                    json.dumps(
+                        {
+                            'route': 'think',
+                            'speech': speech,
+                            'reply': reply,
+                            'frame': str(frame_path),
+                            'model_text': (model_text or '')[:400],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(tts, reply, playback, wav_dir, max_chars=120)
+                if args.once is not None:
+                    break
+                continue
+
+            if is_creep_request(speech):
+                executor.hard_stop()
+                if camera is None:
+                    reply = VISION_UNAVAILABLE_PHRASE
+                    record_turn(speech, reply)
+                    if tts is not None:
+                        speak_short(tts, reply, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+                try:
+                    jpeg, frame_path = capture_current_frame(speech, 'creep')
+                    range_mm = None
+                    if tof is not None:
+                        range_mm = tof.range_mm()
+                    allowed, detail = occupancy_allows_creep(jpeg, range_mm=range_mm)
+                except Exception as exc:
+                    print('creep_gate_failed', exc, file=sys.stderr, flush=True)
+                    allowed, detail = False, {'rejected': type(exc).__name__}
+                    frame_path = Path('')
+                crept = False
+                if allowed:
+                    executor.execute(creep_forward_action())
+                    executor.hard_stop()
+                    crept = True
+                    reply = 'Creeping forward one step.'
+                elif detail.get('blocked'):
+                    reply = 'The floor ahead does not look empty, so I stopped.'
+                else:
+                    reply = OCCUPANCY_REFUSE
+                record_turn(speech, reply)
+                print(
+                    json.dumps(
+                        {
+                            'route': 'creep',
+                            'allowed': allowed,
+                            'crept': crept,
+                            'occupancy': detail,
+                            'reply': reply,
+                            'frame': str(frame_path),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(tts, reply, playback, wav_dir, max_chars=120)
+                if args.once is not None:
+                    break
+                continue
+
+            if is_where_request(speech):
+                executor.hard_stop()
+                target = where_target(speech)
+                if camera is None:
+                    reply = VISION_UNAVAILABLE_PHRASE
+                    record_turn(speech, reply)
+                    if tts is not None:
+                        speak_short(tts, reply, playback, wav_dir)
+                    if args.once is not None:
+                        break
+                    continue
+                try:
+                    jpeg, frame_path = capture_current_frame(speech, 'where')
+                    visible, side, model_text = verify_visual_target(
+                        runtime, jpeg, target, ''
+                    )
+                except Exception as exc:
+                    print('where_failed', exc, file=sys.stderr, flush=True)
+                    visible, side, model_text = False, '', ''
+                    frame_path = Path('')
+                rag = recall_context(speech) if not visible else ''
+                reply = eyes_first_reply(
+                    target=target, visible=visible, side=side, rag=rag
+                )
+                record_turn(speech, reply)
+                print(
+                    json.dumps(
+                        {
+                            'route': 'where_eyes_first',
+                            'target': target,
+                            'visible': visible,
+                            'side': side,
+                            'reply': reply,
+                            'frame': str(frame_path),
+                            'model_text': (model_text or '')[:400],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                if tts is not None:
+                    speak_short(tts, reply, playback, wav_dir, max_chars=120)
+                if args.once is not None:
+                    break
+                continue
+
             # Bounded room search: one fresh frame per viewpoint, short
             # in-place turns, and at most one short relocation after a separate
             # conservative camera path-clear gate. This is intentionally not
@@ -1866,7 +2198,7 @@ def main() -> int:
 
             # "What do you see" is speech-only: answered from a fresh frame with
             # the wheels held stopped, before any motion word can match.
-            if is_describe_request(speech):
+            if is_show_and_tell(speech) or is_describe_request(speech):
                 executor.hard_stop()
                 if camera is None:
                     print(
@@ -1885,7 +2217,10 @@ def main() -> int:
                         break
                     continue
                 try:
-                    jpeg, frame_path = capture_current_frame(speech, 'describe')
+                    jpeg, frame_path = capture_current_frame(
+                        speech,
+                        'show_and_tell' if is_show_and_tell(speech) else 'describe',
+                    )
                 except Exception as exc:
                     print('camera_capture_failed', exc, file=sys.stderr, flush=True)
                     if tts is not None:
@@ -1893,12 +2228,17 @@ def main() -> int:
                     if args.once is not None:
                         break
                     continue
-                description, model_text = describe_scene(runtime, jpeg)
+                if is_show_and_tell(speech):
+                    description, model_text = describe_held_object(runtime, jpeg)
+                    route_name = 'show_and_tell'
+                else:
+                    description, model_text = describe_scene(runtime, jpeg)
+                    route_name = 'describe'
                 record_turn(speech, description or DESCRIBE_FAIL_PHRASE)
                 print(
                     json.dumps(
                         {
-                            'route': 'describe',
+                            'route': route_name,
                             'speech': speech,
                             'description': description,
                             'frame': str(frame_path),
@@ -2347,6 +2687,29 @@ def main() -> int:
                     if args.once is not None:
                         break
                     continue
+                if is_deictic_target(speech):
+                    lock = strongest_color_lock(jpeg)
+                    if lock is None:
+                        executor.hard_stop()
+                        reply = DEICTIC_REFUSE
+                        record_turn(speech, reply)
+                        print(
+                            json.dumps(
+                                {
+                                    'route': 'deictic_refuse',
+                                    'speech': speech,
+                                    'frame': str(frame_path),
+                                    'reply': reply,
+                                }
+                            ),
+                            flush=True,
+                        )
+                        if tts is not None:
+                            speak_short(tts, reply, playback, wav_dir, max_chars=120)
+                        if args.once is not None:
+                            break
+                        continue
+                    speech = 'move toward the {0} object'.format(lock.color)
                 # Planning is a separate parked phase. Cosmos emits only symbols;
                 # calibrated PWM is selected below after the plan passes the gate.
                 executor.hard_stop()
@@ -2542,6 +2905,11 @@ def main() -> int:
         pkill_aplay()
         if camera is not None:
             camera.close()
+        if tof is not None:
+            try:
+                tof.close()
+            except Exception:
+                pass
         if robot is not None:
             try:
                 robot.stop()

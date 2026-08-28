@@ -81,6 +81,44 @@ Old camera frames are never replayed. Every visual question captures the
 current view. JetBot is prompted to say when a requested detail is absent,
 hidden, blurry, or uncertain.
 
+## Cosmos Reason 2 profile
+
+The Cosmos tool agent follows NVIDIA's Reason 2 prompt guidance rather than a
+phrase-to-command list:
+
+- Keep the system prompt minimal (`You are a helpful assistant.`) and place the
+  current task, tool schemas, history, and output contract in the user turn.
+- Put image media before text. The resident client already constructs messages
+  in that order.
+- Explicitly frame an attached image as JetBot's egocentric view. Spatial
+  questions are robot-relative, and a visible person is external to JetBot.
+- Ask for one strict JSON decision. The model infers the desired outcome,
+  selects the smallest authorized next tool, and answers from its observation.
+  A further physical step requires a new observe-and-replan turn, preventing
+  duplicate actuation from one utterance.
+- Keep immediate tool dispatch deterministic and short: thinking disabled,
+  temperature `0`, `top_p=1`, and at most 96 output tokens. This reduces latency
+  and prevents a long reasoning trace from consuming the JSON budget.
+- Enable Reason 2 thinking only for a future stopped, non-real-time planning
+  path. NVIDIA's reasoning profile is temperature `0.6`, `top_p=0.95`,
+  `top_k=20`, repetition penalty `1.0`, and presence penalty `0.0`; it also
+  needs a much larger output budget than this real-time dispatcher.
+- Sample a small number of settled frames instead of processing the entire
+  camera stream. Keep actuation, watchdogs, limits, and e-stop outside Cosmos.
+- FP8 TensorRT engines are the recommended edge optimization when supported.
+  ROS 2 remains the transport and lifecycle layer; it does not replace the
+  model-independent capability gate.
+
+This split uses Cosmos for semantic and embodied decisions while keeping the
+physical safety boundary deterministic. Reasoning mode is intentionally not
+enabled during motion.
+
+References:
+
+- [NVIDIA Cosmos Reason 2 prompt guide](https://nvidia-cosmos.github.io/cosmos-cookbook/getting_started/prompt_guide/reason_guide.html)
+- [NVIDIA edge VLM social-robot recipe](https://nvidia-cosmos.github.io/cosmos-cookbook/recipes/inference/reason2/intbot_edge_vlm/inference.html)
+- [NVIDIA egocentric social and physical reasoning recipe](https://nvidia-cosmos.github.io/cosmos-cookbook/recipes/inference/reason2/intbot_showcase/inference.html)
+
 ## Examples
 
 - “Who are you?”
@@ -93,6 +131,11 @@ hidden, blurry, or uncertain.
 - “How many objects are there?”
 - “Move around the room and look for the blue object.”
 - “Go around the blue object.” (detour; refuses for uncoloured targets)
+- “What am I holding?” (this JPEG only; no RAG) — [13-five-demos.md](13-five-demos.md)
+- “If the floor is clear, creep forward.”
+- “Drive toward that.” / “Think hard whether that path is safe.”
+- “Where is the blue backpack?” (eyes first)
+- “This view is the kitchen corner.” / “Are we at the kitchen corner?”
 
 Long-term facts use the separate CPU BGE + LanceDB path. Say “remember that…”
 to store a fact explicitly; general conversation is not silently promoted to

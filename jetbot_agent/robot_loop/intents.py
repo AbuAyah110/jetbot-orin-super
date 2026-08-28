@@ -186,6 +186,58 @@ _REMEMBER_PATTERN = re.compile(
     r"don't\s+forget(?:\s+that)?)\s+(?P<fact>.+)$"
 )
 
+# Demo 1: parked JPEG-only identification. Kept off the RAG visual-question
+# path so memory cannot invent what is in the hand.
+_SHOW_AND_TELL_PATTERN = re.compile(
+    r'\b(?:'
+    r'what\s+am\s+i\s+holding'
+    r'|what\s+(?:is|are)\s+(?:in\s+)?my\s+hand'
+    r'|what\s+is\s+this(?:\s+object|\s+thing)?'
+    r'|what\s+am\s+i\s+showing\s+(?:you)?'
+    r')\b'
+)
+
+# Demo 2: one Python-gated creep. Cosmos is not allowed to authorize it.
+_CREEP_PATTERN = re.compile(
+    r'\b(?:'
+    r'creep\s+(?:forward|ahead)'
+    r'|if\s+the\s+floor\s+is\s+clear'
+    r'|creep\s+if\s+(?:it\'?s|the\s+floor\s+is)\s+clear'
+    r')\b'
+)
+
+# Demo 3: parked think. Motion verbs still win, so "think then drive" is not
+# a think turn.
+_THINK_PATTERN = re.compile(
+    r'\b(?:'
+    r'think\s+hard'
+    r'|reason\s+(?:about|whether|if)'
+    r'|think\s+(?:about\s+)?whether'
+    r')\b'
+)
+
+# Demo 4: named-object location from this frame. "Where is this" stays a
+# deictic visual follow-up, not a backpack lookup.
+_WHERE_PATTERN = re.compile(
+    r'\b(?:where\s+is|do\s+you\s+see|can\s+you\s+see)\s+'
+    r'(?:the\s+)?(?P<target>(?!this\b|that\b|it\b).+)$'
+)
+
+# Demo 5: text places, never stored pictures.
+_THIS_VIEW_IS_PATTERN = re.compile(
+    r'\bthis\s+view\s+is\s+(?:the\s+)?(?P<place>.+)$'
+)
+_ARE_WE_AT_PATTERN = re.compile(
+    r'\b(?:'
+    r'are\s+we\s+(?:at|in)\s+(?:the\s+)?(?P<place>.+)'
+    r'|is\s+this\s+the\s+(?P<place_alt>.+)'
+    r')$'
+)
+
+_DEICTIC_TARGET = re.compile(
+    r'^(?:that|this|it|the\s+(?:object|thing|item|one))(?:\s+please)?$'
+)
+
 
 def normalize_transcript(text: str) -> str:
     """Lowercase and strip punctuation. ASR returns UPPERCASE with repeats."""
@@ -244,6 +296,112 @@ def is_describe_request(text: str) -> bool:
     if not speech:
         return False
     return bool(_DESCRIBE_PATTERN.search(speech))
+
+
+def is_show_and_tell(text: str) -> bool:
+    """True for parked JPEG-only 'what am I holding' identification."""
+    speech = strip_politeness(normalize_transcript(text))
+    if not speech or is_motion_command(speech):
+        return False
+    return bool(_SHOW_AND_TELL_PATTERN.search(speech))
+
+
+def is_creep_request(text: str) -> bool:
+    """True for a single Python-gated creep, not an unbounded drive."""
+    speech = strip_politeness(normalize_transcript(text))
+    if not speech:
+        return False
+    return bool(_CREEP_PATTERN.search(speech))
+
+
+def is_think_request(text: str) -> bool:
+    """True for parked think-hard. A leading motion verb vetoes this."""
+    speech = strip_politeness(normalize_transcript(text))
+    if not speech or is_motion_command(speech):
+        return False
+    return bool(_THINK_PATTERN.search(speech))
+
+
+def where_target(text: str) -> str:
+    """Named object the speaker asked to locate in this frame, or empty."""
+    speech = strip_politeness(normalize_transcript(text))
+    if not speech or is_motion_command(speech):
+        return ''
+    match = _WHERE_PATTERN.search(speech)
+    if match is None:
+        return ''
+    target = match.group('target')
+    for trailer in _TARGET_TRAILERS:
+        target = trailer.sub('', target)
+    target = re.sub(r'^(?:a|an|the)\s+', '', target).strip()
+    if target in {'this', 'that', 'it', 'anything', 'something', 'everything'}:
+        return ''
+    return target[:48]
+
+
+def is_where_request(text: str) -> bool:
+    """True for eyes-first 'where is the X' / 'do you see the X'."""
+    return bool(where_target(text))
+
+
+def place_name(text: str) -> str:
+    """Place name from 'this view is …', or empty."""
+    speech = strip_politeness(normalize_transcript(text))
+    if not speech or is_motion_command(speech):
+        return ''
+    match = _THIS_VIEW_IS_PATTERN.search(speech)
+    if match is None:
+        return ''
+    name = match.group('place').strip()
+    name = re.sub(r'\s+(?:please|for\s+me|now)$', '', name)
+    return name[:48]
+
+
+def is_place_teach(text: str) -> bool:
+    return bool(place_name(text))
+
+
+def place_query_name(text: str) -> str:
+    """Place name from 'are we at …', or empty."""
+    speech = strip_politeness(normalize_transcript(text))
+    if not speech or is_motion_command(speech):
+        return ''
+    match = _ARE_WE_AT_PATTERN.search(speech)
+    if match is None:
+        return ''
+    name = (match.group('place') or match.group('place_alt') or '').strip()
+    name = re.sub(r'\s+(?:please|for\s+me|now|\?+)$', '', name)
+    name = re.sub(r'^(?:the\s+)?', '', name)
+    if name in {'this', 'that', 'it'}:
+        return ''
+    return name[:48]
+
+
+def is_place_query(text: str) -> bool:
+    return bool(place_query_name(text))
+
+
+def is_deictic_target(text: str) -> bool:
+    """True when the approach target is only 'that' / 'this' / 'the object'."""
+    target = _target_from_toward(text)
+    if not target:
+        return False
+    return bool(_DEICTIC_TARGET.match(target))
+
+
+def _target_from_toward(text: str) -> str:
+    speech = strip_politeness(normalize_transcript(text))
+    match = re.search(
+        r'\b(?:toward|towards|to|at)\s+(?P<target>.+)$',
+        speech,
+    )
+    if match is None:
+        return ''
+    target = match.group('target')
+    for trailer in _TARGET_TRAILERS:
+        target = trailer.sub('', target)
+    target = re.sub(r'^(?:a|an|the)\s+', '', target).strip()
+    return target[:48]
 
 
 def is_plan_preview_request(text: str) -> bool:
