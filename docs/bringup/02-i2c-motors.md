@@ -41,5 +41,14 @@ Pass: left then right twitch, then **stop**; timeout path also stops. Leave `con
 | --- | --- | --- |
 | 1 | `UU` @ `0x25`, `UU` @ `0x40` | Kernel driver claimed. Spec target `0x40` is present as `UU`, not a free `0x40`. |
 | 7 | `0x3c`, `0x60`, `0x70` | Classic JetBot HAT: `0x70`/`0x60` PCA9685, `0x3c` OLED. |
+| 1 (2026-08-28) | `UU` @ `0x25`, `UU` @ `0x40`, **`0x29`** | Front **VL53L0X** ToF (model id `0xEE`). Motors stay on bus 7. |
+
+Probe ranging (no PWM):
+
+```bash
+.venv/bin/python scripts/bringup/probe_tof.py
+```
+
+Pass: five millimetre readings. `range_mm < 250` is blocked; `>= 400` is clear enough for one creep pulse. Out-of-range `8190` fails closed.
 
 Prior wheels motion was done in Jupyter, not `test_motors.py`: `notebooks/basic_motion/basic_motion.ipynb` (saved cells through execution 19; comment: I2C bus **7**, addr **`0x70`**, `right_motor_alpha=-1`). This probe does **not** close the wheels-up PWM ticket.

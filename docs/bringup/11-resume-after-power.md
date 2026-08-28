@@ -7,7 +7,7 @@ Saved 2026-08-27. Cosmos engines stay on disk; they are not rebuilt on boot.
 - Branch: `stage-g-cosmos-nano`
 - Loop: no-beep VAD listen (`--auto-listen`), 8 s max utterance
 - Engines: `~/jetbot-thin-stack/cosmos-engines/`
-- Collision ToF/bumper: **not present** — camera is not a pre-impact stop
+- Collision ToF: **VL53L0X on bus 1 @ 0x29** — millimetre ranging; bumper still not present
 
 ## After battery boot
 
