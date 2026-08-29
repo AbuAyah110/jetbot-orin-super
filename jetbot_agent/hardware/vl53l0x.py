@@ -21,6 +21,11 @@ MODEL_ID = 0xEE
 REVISION_ID = 0x10
 # ST marks "no object / wrap" as this sentinel.
 OUT_OF_RANGE_MM = 8190
+# RESULT_RANGE_STATUS bits 6:3. ST's PAL table maps raw 9 → "range valid".
+# Cheap GY-530 boards commonly report 11 with a usable millimetre value.
+# 5 is analog/VCSEL hardware fail.
+_DEVICE_STATUS_HARDWARE_FAIL = 5
+_DEVICE_STATUS_OK = frozenset({0, 9, 11})
 # Creep / near-field stop. Indoor JetBot should not lunge into something closer.
 STOP_MM = 250
 CLEAR_MM = 400
@@ -108,6 +113,18 @@ def interpret_range_mm(range_mm: Optional[int]) -> dict:
     return detail
 
 
+def decode_range_mm(*, status: int, raw_mm: int) -> int:
+    """Keep a usable millimetre field; fail closed on hardware death or wrap."""
+    if int(status) == _DEVICE_STATUS_HARDWARE_FAIL:
+        return OUT_OF_RANGE_MM
+    millimetres = int(raw_mm)
+    if millimetres <= 0 or millimetres >= OUT_OF_RANGE_MM:
+        return OUT_OF_RANGE_MM
+    if int(status) in _DEVICE_STATUS_OK:
+        return millimetres
+    return OUT_OF_RANGE_MM
+
+
 class VL53L0X:
     """Single-shot millimetre ranging. Not thread-safe."""
 
@@ -128,6 +145,8 @@ class VL53L0X:
         self._stop_variable = 0
         self._measurement_timing_budget_us = 0
         self._data_ready = False
+        self.last_status = -1
+        self.last_raw_mm = 0
         model = self._read_u8(_IDENTIFICATION_MODEL_ID)
         revision = self._read_u8(_IDENTIFICATION_REVISION_ID)
         if model != MODEL_ID:
@@ -449,6 +468,6 @@ class VL53L0X:
         range_mm = self._read_u16(_RESULT_RANGE_STATUS + 10)
         status = (self._read_u8(_RESULT_RANGE_STATUS) >> 3) & 0x1F
         self._write_u8(_SYSTEM_INTERRUPT_CLEAR, 0x01)
-        if status not in (0,):
-            return OUT_OF_RANGE_MM
-        return range_mm
+        self.last_status = status
+        self.last_raw_mm = range_mm
+        return decode_range_mm(status=status, raw_mm=range_mm)

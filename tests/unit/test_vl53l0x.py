@@ -4,6 +4,7 @@ from jetbot_agent.hardware.vl53l0x import (
     CLEAR_MM,
     OUT_OF_RANGE_MM,
     STOP_MM,
+    decode_range_mm,
     interpret_range_mm,
 )
 from jetbot_agent.robot_loop.demos import occupancy_allows_creep
@@ -38,3 +39,15 @@ def test_interpret_range_none_is_not_clear():
     detail = interpret_range_mm(None)
     assert detail['clear'] is False
     assert detail['ok'] is False
+
+
+def test_gy530_status_11_keeps_a_real_range():
+    assert decode_range_mm(status=11, raw_mm=553) == 553
+    assert decode_range_mm(status=9, raw_mm=400) == 400
+    assert decode_range_mm(status=0, raw_mm=120) == 120
+
+
+def test_hardware_fail_and_wrap_are_out_of_range():
+    assert decode_range_mm(status=5, raw_mm=120) == OUT_OF_RANGE_MM
+    assert decode_range_mm(status=11, raw_mm=8191) == OUT_OF_RANGE_MM
+    assert decode_range_mm(status=4, raw_mm=8191) == OUT_OF_RANGE_MM

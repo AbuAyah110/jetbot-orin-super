@@ -41,7 +41,18 @@ def main() -> int:
         for index in range(samples):
             millimetres = tof.range_mm()
             policy = interpret_range_mm(millimetres)
-            print(json.dumps({'n': index, 'range_mm': millimetres, **policy}), flush=True)
+            print(
+                json.dumps(
+                    {
+                        'n': index,
+                        'range_mm': millimetres,
+                        'status': tof.last_status,
+                        'raw_mm': tof.last_raw_mm,
+                        **policy,
+                    }
+                ),
+                flush=True,
+            )
             time.sleep(0.15)
     return 0
 
