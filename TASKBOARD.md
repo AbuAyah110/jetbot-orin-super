@@ -56,7 +56,8 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | Five demos | **Wired** — show-and-tell, occupancy creep, deictic refuse, parked think, eyes-first where-is, text places | [13-five-demos.md](docs/bringup/13-five-demos.md) |
 | Motion request routing | **Fixed** — motion verbs veto parked question routes; speak-only replies can no longer claim movement | [12-natural-conversation.md](docs/bringup/12-natural-conversation.md) |
 | Go-around detour | **Partial** — colour-grounded targets only; honest refusal otherwise | `scripts/bringup/talk_and_drive.py` |
-| Monocular path gate | **Does not work** — every prompt wording is a constant; blocked on ToF/bumper | `scripts/bringup/probe_path_gate.py` |
+| Monocular path gate | **Does not work** — every prompt wording is a constant; superseded by ToF for creep, bumper still absent for contact | `scripts/bringup/probe_path_gate.py` |
+| Collision ToF | **Live** — VL53L0X bus 1 @ `0x29` tracks distance (≈165 mm blocked, ≈550 mm clear); this board reports ST status 11, which the driver now accepts | `.venv/bin/python scripts/bringup/probe_tof.py` |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
 | Memory | **Live** — 32.5 MiB CPU INT8 BGE, LanceDB float16 vectors, explicit teach + restart recall passed | [09-memory.md](docs/bringup/09-memory.md) |
 

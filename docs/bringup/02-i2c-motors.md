@@ -67,4 +67,25 @@ Probe ranging (no PWM):
 
 Pass: five millimetre readings. `range_mm < 250` is blocked; `>= 400` is clear enough for one creep pulse. Out-of-range `8190` fails closed.
 
+Measured 2026-08-28: a hand at ~16 cm reads `167 mm blocked`, an empty room reads
+`≈550 mm clear`.
+
+### This board reports device status 11, not 0
+
+`RESULT_RANGE_STATUS` bits 6:3 come back as **11** on this GY-530 even for good
+shots, so an earlier version that accepted only status `0` rewrote every reading
+as `8190` and looked exactly like a dead laser. The driver now accepts `0`, `9`,
+and `11`, and still fails closed on status `5` (analog/VCSEL hardware fail) and
+on the `8190`/`8191` wrap sentinel.
+
+When ranging looks dead, check the real cause before suspecting the emitter:
+
+```bash
+.venv/bin/python scripts/bringup/probe_tof.py   # prints status and raw_mm
+```
+
+A healthy sensor shows a nonzero `signal_rate` and an `ambient_rate`, and init
+completes VCSEL reference calibration in well under a second. Status `5`, or an
+init timeout, is the signature of genuinely dead analog hardware.
+
 Prior wheels motion was done in Jupyter, not `test_motors.py`: `notebooks/basic_motion/basic_motion.ipynb` (saved cells through execution 19; comment: I2C bus **7**, addr **`0x70`**, `right_motor_alpha=-1`). This probe does **not** close the wheels-up PWM ticket.
