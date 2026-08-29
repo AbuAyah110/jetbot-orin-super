@@ -28,6 +28,7 @@ from talk_and_drive import (  # noqa: E402
     around_forward_action,
     around_turn_action,
     color_corridor_clear,
+    describe_scene,
     detour_side_for,
     opposite_side,
     asr_transcript_usable,
@@ -36,6 +37,7 @@ from talk_and_drive import (  # noqa: E402
     pcm16_rms,
     search_forward_action,
     search_turn_action,
+    strongest_color_lock,
     speak_understand_fail,
     calibrate_cosmos_action,
     clamp_test_action,
@@ -101,6 +103,54 @@ def test_color_grounding_corrects_relook_side():
     assert safe is True
     assert side == 'right'
     assert 'COLOR_GROUNDING' in raw
+
+
+def test_deictic_lock_prefers_center_object_over_red_edge_tint():
+    import io
+    from PIL import Image, ImageDraw
+
+    image = Image.new('RGB', (448, 448), (30, 30, 30))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((150, 120, 280, 300), fill='blue')
+    draw.rectangle((405, 0, 447, 447), fill=(220, 70, 80))
+    stream = io.BytesIO()
+    image.save(stream, format='JPEG', quality=95)
+
+    lock = strongest_color_lock(stream.getvalue())
+
+    assert lock is not None
+    assert lock.color == 'blue'
+    assert lock.side == 'center'
+
+
+def test_deictic_lock_rejects_small_decorative_red_patch():
+    import io
+    from PIL import Image, ImageDraw
+
+    image = Image.new('RGB', (448, 448), (30, 30, 30))
+    ImageDraw.Draw(image).rectangle((180, 180, 200, 205), fill='red')
+    stream = io.BytesIO()
+    image.save(stream, format='JPEG', quality=95)
+
+    assert strongest_color_lock(stream.getvalue()) is None
+
+
+def test_scene_prompt_is_robot_relative_and_forbids_perspective_tautology():
+    class Runtime:
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return 'In front of me, I can see a person sitting on the floor.'
+
+    runtime = Runtime()
+    description, _ = describe_scene(runtime, b'jpeg')
+
+    assert description.startswith('In front of me, I can see')
+    prompt = runtime.calls[0]['user_text']
+    assert 'visible person is someone outside JetBot' in prompt
+    assert 'perspective tautology' in prompt
 
 
 def test_test_clamp_caps_duration_to_half_second():

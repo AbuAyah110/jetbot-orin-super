@@ -224,6 +224,8 @@ def test_non_visual_conversation_does_not_open_camera(transcript):
         ('LOOK FOR THE BLUE BOX', 'blue box'),
         ('SEARCH AROUND THE ROOM FOR MY KEYS', 'my keys'),
         ('MOVE AROUND THE ROOM AND LOOK FOR A RED OBJECT', 'red object'),
+        ('ON THE ROOM FOR THE BLUE OBJECT', 'blue object'),
+        ('IN THE ROOM FOR MY BALL', 'my ball'),
         ('FIND THE GREEN TOY', 'green toy'),
         ('LOCATE THE PERSON', 'person'),
     ],

@@ -443,15 +443,19 @@ def clean_description(raw: str) -> str:
 def describe_scene(runtime, jpeg: bytes) -> tuple[str, str]:
     """Describe the current frame in plain speech. Never returns motion."""
     prompt = (
-        'Describe what you see in this image in one or two short sentences. '
-        'Name the main objects, their colors, and whether each is on your left, '
-        'ahead, or on your right. Plain sentences only: no JSON, no markdown, '
-        'no <think>, and no motion commands.'
+        'This image is the current forward-facing camera view from JetBot. '
+        'Describe the visible scene itself in one or two short spoken sentences. '
+        'Start with "In front of me, I can see" and then name concrete visible '
+        'people or objects. A visible person is someone outside JetBot; never '
+        'describe that person as "I" or "me". Do not restate or explain the '
+        'phrase "in front of you", and do not answer with a perspective tautology. '
+        'Mention left or right only for a clearly visible object. Plain English '
+        'only: no JSON, markdown, <think>, or motion commands.'
     )
     try:
         raw = runtime.generate(
             system=(
-                'You are the robot describing its own camera view out loud. '
+                'You are a helpful assistant describing one robot camera image. '
                 'Answer in plain spoken English. Never emit JSON or wheel power.'
             ),
             user_text=prompt,
@@ -498,12 +502,31 @@ def creep_forward_action() -> RobotAction:
     )
 
 
+DEICTIC_MIN_FRACTION = 0.01
+DEICTIC_EDGE_MARGIN = 0.10
+
+
 def strongest_color_lock(jpeg: bytes):
     """Best red/blue/green blob, or None. Deictic approach uses this lock."""
     best = None
     for color in SUPPORTED_COLORS:
         found = locate_color(jpeg, color + ' object')
-        if found.visible and (best is None or found.pixels > best.pixels):
+        # An unnamed "that" must be much clearer than a named colour target.
+        # Small decorative patches are not the object, and a saturated strip
+        # touching the frame edge is usually this room's pink wall. Both caused
+        # deictic requests to become a fabricated "red object on my right".
+        centered = (
+            found.width > 0
+            and DEICTIC_EDGE_MARGIN * found.width
+            <= found.center_x
+            <= (1.0 - DEICTIC_EDGE_MARGIN) * found.width
+        )
+        if (
+            found.visible
+            and found.fraction >= DEICTIC_MIN_FRACTION
+            and centered
+            and (best is None or found.pixels > best.pixels)
+        ):
             best = found
     return best
 
@@ -1947,7 +1970,20 @@ def main() -> int:
                     crept = True
                     reply = 'Creeping forward one step.'
                 elif detail.get('blocked'):
-                    reply = 'The floor ahead does not look empty, so I stopped.'
+                    millimetres = detail.get('range_mm')
+                    if isinstance(millimetres, int) and millimetres > 0:
+                        reply = (
+                            'My distance sensor sees something {0} centimetres '
+                            'ahead, so I stopped.'
+                        ).format(max(1, round(millimetres / 10.0)))
+                    else:
+                        reply = 'My distance sensor reports an obstacle, so I stopped.'
+                elif detail.get('source') == 'tof' and detail.get('rejected') == 'uncertain_band':
+                    millimetres = detail.get('range_mm')
+                    reply = (
+                        'My distance sensor reads {0} centimetres, which is too '
+                        'close to trust, so I stayed put.'
+                    ).format(max(1, round(millimetres / 10.0)))
                 else:
                     reply = OCCUPANCY_REFUSE
                 record_turn(speech, reply)

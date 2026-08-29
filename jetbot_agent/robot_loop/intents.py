@@ -127,6 +127,10 @@ _VISUAL_QUESTION_PATTERN = re.compile(
 _SEARCH_PATTERN = re.compile(
     r'\b(?:'
     r'(?:look|search|hunt)\s+(?:around\s+)?(?:the\s+room\s+)?for'
+    # Zipformer repeatedly heard "look around the room for" as
+    # "on the room for". Keep that bounded corruption on the search route
+    # instead of letting conversation claim it looked without turning.
+    r'|(?:in|on)\s+(?:the\s+)?room\s+for'
     r'|find|locate'
     r')\s+(?:me\s+)?(?P<target>.+)$'
 )
