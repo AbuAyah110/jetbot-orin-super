@@ -252,6 +252,21 @@ def object_relative_request(speech: str) -> bool:
     )
 
 
+def approach_handoff_speech(target: str) -> str:
+    """Phrase a found search target as a plain approach request.
+
+    The target already carries its own determiner in "my keys" or "a red box",
+    so an unconditional article produced "move toward the my keys", which no
+    route claimed.
+    """
+    name = ' '.join((target or '').split())
+    if not name:
+        return ''
+    if re.match(r'^(?:a|an|the|my|your|our|his|her|their|its)\b', name, re.IGNORECASE):
+        return 'move toward {0}'.format(name)
+    return 'move toward the {0}'.format(name)
+
+
 def calibrate_cosmos_action(action: RobotAction, speech: str = '') -> RobotAction:
     """Use an explicit grounded side only; ambiguous model motion is a stop."""
     if action is None or not action.raw_ok:
@@ -2120,7 +2135,17 @@ def main() -> int:
                 # approach. The search route can only look, so a found target
                 # hands off to the existing colour-verified approach below
                 # rather than reporting success from a standstill.
-                chain_approach = bool(found_side) and search_wants_approach(speech)
+                #
+                # Only promise the approach if the handoff will actually be
+                # taken. A target the approach route cannot name, such as "my
+                # keys", otherwise drew a spoken "Approaching it." followed by
+                # no movement, which is the failure this handoff exists to end.
+                handoff = approach_handoff_speech(target)
+                chain_approach = (
+                    bool(found_side)
+                    and search_wants_approach(speech)
+                    and object_relative_request(handoff)
+                )
                 if found_side:
                     location = {
                         'left': 'on my left',
@@ -2167,7 +2192,7 @@ def main() -> int:
                     continue
                 # Re-enter this turn as a plain approach request so the target
                 # is re-verified against a fresh frame before any wheels move.
-                speech = 'move toward the {0}'.format(target)
+                speech = handoff
 
             # A plan-preview question is deliberately no-motion. It exercises
             # the exact same visual planner and calibrated wheel mapping as an

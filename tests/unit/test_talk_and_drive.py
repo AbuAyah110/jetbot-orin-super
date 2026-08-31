@@ -21,6 +21,8 @@ from talk_and_drive import (  # noqa: E402
     UNDERSTAND_FAIL_PHRASE,
     TalkDriveExecutor,
     _target_phrase,
+    approach_handoff_speech,
+    object_relative_request,
     AROUND_FORWARD_DURATION_S,
     AROUND_MAX_SWING_TURNS,
     AROUND_PASS_PULSES,
@@ -103,6 +105,26 @@ def test_color_grounding_corrects_relook_side():
     assert safe is True
     assert side == 'right'
     assert 'COLOR_GROUNDING' in raw
+
+
+@pytest.mark.parametrize(
+    'target,expected_route',
+    [
+        ('blue object', True),
+        ('red box', True),
+        ('chair', True),
+        # The approach planner cannot name these, so the search must not
+        # promise an approach it will not perform.
+        ('my keys', False),
+        ('mira', False),
+    ],
+)
+def test_search_only_promises_an_approach_it_can_actually_route(
+    target, expected_route
+):
+    handoff = approach_handoff_speech(target)
+    assert 'the my' not in handoff
+    assert object_relative_request(handoff) is expected_route
 
 
 def test_deictic_lock_prefers_center_object_over_red_edge_tint():
