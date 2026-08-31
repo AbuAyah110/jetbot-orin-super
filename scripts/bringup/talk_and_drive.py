@@ -129,6 +129,7 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     place_name,
     place_query_name,
     search_target,
+    search_wants_approach,
     where_target,
 )
 from jetbot_agent.robot_loop.memory_stubs import (  # noqa: E402
@@ -2115,13 +2116,23 @@ def main() -> int:
                     print('camera_search_failed', exc, file=sys.stderr, flush=True)
                 finally:
                     executor.hard_stop()
+                # "Find the blue object and go to it" is a search followed by an
+                # approach. The search route can only look, so a found target
+                # hands off to the existing colour-verified approach below
+                # rather than reporting success from a standstill.
+                chain_approach = bool(found_side) and search_wants_approach(speech)
                 if found_side:
                     location = {
                         'left': 'on my left',
                         'center': 'in front of me',
                         'right': 'on my right',
                     }.get(found_side, 'in view')
-                    reply = 'I found {0} {1}.'.format(target, location)
+                    if chain_approach:
+                        reply = 'I found {0} {1}. Approaching it.'.format(
+                            target, location
+                        )
+                    else:
+                        reply = 'I found {0} {1}.'.format(target, location)
                 elif relocated:
                     reply = "I moved and looked around, but I couldn't find {0} safely.".format(
                         target
@@ -2142,6 +2153,7 @@ def main() -> int:
                             'relocated': relocated,
                             'views': search_log,
                             'reply': reply,
+                            'chain_approach': chain_approach,
                         },
                         ensure_ascii=False,
                     ),
@@ -2149,9 +2161,13 @@ def main() -> int:
                 )
                 if tts is not None:
                     speak_short(tts, reply, playback, wav_dir, max_chars=120)
-                if args.once is not None:
-                    break
-                continue
+                if not chain_approach:
+                    if args.once is not None:
+                        break
+                    continue
+                # Re-enter this turn as a plain approach request so the target
+                # is re-verified against a fresh frame before any wheels move.
+                speech = 'move toward the {0}'.format(target)
 
             # A plan-preview question is deliberately no-motion. It exercises
             # the exact same visual planner and calibrated wheel mapping as an

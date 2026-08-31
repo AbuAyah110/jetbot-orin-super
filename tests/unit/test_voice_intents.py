@@ -29,6 +29,7 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     match_intent,
     memory_fact,
     search_target,
+    search_wants_approach,
 )
 
 from talk_and_drive import (  # noqa: E402
@@ -235,8 +236,40 @@ def test_bounded_room_search_extracts_target(transcript, target):
     assert search_target(transcript) == target
 
 
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        'FIND THE BLUE OBJECT AND GO TO IT',
+        'FIND THE RED OBJECT IN THE ROOM AND GO TO IT',
+        'LOOK AROUND THE ROOM FOR THE BLUE OBJECT AND DRIVE TO IT',
+        'FIND THE BLUE OBJECT AND APPROACH IT',
+        'FIND THE BLUE OBJECT AND COME OVER TO IT',
+    ],
+)
+def test_compound_search_names_object_and_requests_approach(transcript):
+    # The follow-on clause and the room locative are not part of the object
+    # name, and the request is not satisfied by looking alone.
+    assert search_target(transcript).endswith('object')
+    assert 'go to it' not in search_target(transcript)
+    assert search_wants_approach(transcript) is True
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        'FIND THE BLUE OBJECT',
+        'LOOK AROUND THE ROOM FOR THE BLUE OBJECT',
+        'FIND THE BLUE OBJECT AND TELL ME WHERE IT IS',
+    ],
+)
+def test_look_only_search_does_not_request_approach(transcript):
+    assert is_search_request(transcript) is True
+    assert search_wants_approach(transcript) is False
+
+
 def test_approach_is_not_mistaken_for_room_search():
     assert is_search_request('MOVE TOWARD THE BLUE OBJECT') is False
+    assert search_wants_approach('MOVE TOWARD THE BLUE OBJECT') is False
     assert is_search_request('TURN LEFT') is False
 
 

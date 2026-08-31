@@ -26,7 +26,13 @@ _MOTION_VERBS = (
     r'(?:mov(?:e|ed|ing)|driv(?:e|ing)|drove|turn(?:ed|ing)?|rotat(?:e|ed|ing)'
     r'|circl(?:e|ed|ing)|orbit(?:ed|ing)?|navigat(?:e|ed|ing)|head(?:ed|ing)'
     r'|roll(?:ed|ing)|proceed(?:ed|ing)?|steer(?:ed|ing)?'
-    r'|go(?:ing)?\s+around|went\s+around)'
+    r'|go(?:ing)?\s+around|went\s+around'
+    # Approaching is motion too. Without these, a parked turn answered "I see
+    # the blue object in front of me; I will approach it" and nothing moved.
+    r'|approach(?:es|ed|ing)?'
+    r'|(?:go|going|come|coming|get|getting|driv(?:e|ing))\s+'
+    r'(?:over\s+)?(?:to|toward|towards|closer)'
+    r'|went\s+(?:to|toward|towards))'
 )
 _MOTION_CLAIM_PATTERNS = (
     # First person: "I am moving around it", "I've circled the object".

@@ -173,6 +173,12 @@ def test_visual_follow_up_admits_uncertainty():
         'I have moved around the chair.',
         'Okay, turning around it now.',
         "I've circled the object.",
+        # Reported live: a parked turn answered this and nothing moved.
+        'I see the blue object in front of me; I will approach it.',
+        'I am approaching the blue object.',
+        'Sure, I will go to it now.',
+        "I'm coming over to the blue object.",
+        'I will get closer to it.',
     ],
 )
 def test_spoken_motion_claims_are_replaced_with_an_honest_refusal(say):

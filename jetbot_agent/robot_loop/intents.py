@@ -135,6 +135,27 @@ _SEARCH_PATTERN = re.compile(
     r')\s+(?:me\s+)?(?P<target>.+)$'
 )
 
+# A follow-on "and go to it" clause, and the room locative, are not part of the
+# object's name. Applied repeatedly so "red object in the room and go to it"
+# reduces to "red object".
+_SEARCH_TRAILERS = (
+    re.compile(
+        r'\s+and\s+(?:go|drive|move|come|head|roll|walk)\s+'
+        r'(?:over\s+)?(?:to|toward|towards)\s+(?:it|there)$'
+    ),
+    re.compile(r'\s+and\s+(?:approach|go\s+to)\s+(?:it|there)$'),
+    re.compile(r'\s+(?:in|inside|around)\s+(?:the\s+)?(?:room|area|house)$'),
+    re.compile(r'\s+(?:please|for\s+me|now)$'),
+)
+
+# The same clause, used as the signal to chain an approach after the search.
+_SEARCH_APPROACH_PATTERN = re.compile(
+    r'\band\s+(?:'
+    r'(?:go|drive|move|come|head|roll|walk)\s+(?:over\s+)?(?:to|toward|towards)'
+    r'|approach'
+    r')\s+(?:it|there)\b'
+)
+
 # A motion verb at the head of the utterance means the speaker asked for
 # movement, whatever else the sentence contains. Parked question routes must
 # defer to it: "move around the object in front of you" contains the literal
@@ -467,15 +488,39 @@ def is_behind_request(text: str) -> bool:
 
 
 def search_target(text: str) -> str:
-    """Return a requested visual-search target, or an empty string."""
+    """Return a requested visual-search target, or an empty string.
+
+    "Find the red object in the room and go to it" names one object. Without
+    stripping the locative and the follow-on clause, the whole tail became the
+    target, so TTS said "I found red object in the room and go to it on my
+    left" and the detector was handed that string as a colour phrase.
+    """
     speech = normalize_transcript(text)
     match = _SEARCH_PATTERN.search(speech)
     if match is None:
         return ''
     target = match.group('target')
     target = re.sub(r'^(?:a|an|the)\s+', '', target)
-    target = re.sub(r'\s+(?:please|for\s+me)$', '', target)
+    for _ in range(len(_SEARCH_TRAILERS)):
+        trimmed = target
+        for trailer in _SEARCH_TRAILERS:
+            trimmed = trailer.sub('', trimmed)
+        if trimmed == target:
+            break
+        target = trimmed
     return target[:48].strip()
+
+
+def search_wants_approach(text: str) -> bool:
+    """True when a search request also asked to drive to what is found.
+
+    "Find the blue object and go to it" is two steps. Answering only the first
+    and staying still is not an honest completion of the request.
+    """
+    speech = strip_politeness(normalize_transcript(text))
+    if not speech or not search_target(speech):
+        return False
+    return bool(_SEARCH_APPROACH_PATTERN.search(speech))
 
 
 def is_search_request(text: str) -> bool:
