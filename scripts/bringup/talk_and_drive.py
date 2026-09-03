@@ -54,6 +54,7 @@ for _extra_site in (
 
 from jetbot_agent.hardware.vl53l0x import (  # noqa: E402
     VL53L0X,
+    approach_pulse_duration,
     approach_stop_reply,
     creep_refusal_reply,
     tof_near_field_blocks,
@@ -2886,10 +2887,13 @@ def main() -> int:
                 pending = expand_ticks(plan.steps)
                 try:
                     while pending and not stop_requested:
+                        range_mm = None
+                        range_kind = ''
                         if tof is not None:
                             range_mm = tof.range_mm()
+                            range_kind = tof.last_kind
                             blocked, tof_detail = tof_near_field_blocks(
-                                range_mm, kind=tof.last_kind, for_approach=True
+                                range_mm, kind=range_kind, for_approach=True
                             )
                             if blocked:
                                 aborted = True
@@ -2909,6 +2913,15 @@ def main() -> int:
                         step = pending[0]
                         tick_number += 1
                         action = step_action(step)
+                        # The range is only read between pulses, so the pulse
+                        # itself must be short enough not to cross the standoff.
+                        pulse_s = approach_pulse_duration(
+                            range_mm,
+                            kind=range_kind,
+                            max_duration_s=APPROACH_DURATION_S,
+                        )
+                        if pulse_s < action.duration_s:
+                            action = replace(action, duration_s=pulse_s)
                         left, right = step_wheels(step)
                         print(
                             'approach_tick {0}/{1} step={2} side={3} duration_s={4:.2f} '
@@ -2917,7 +2930,7 @@ def main() -> int:
                                 plan.total_ticks,
                                 step,
                                 observed_side,
-                                APPROACH_DURATION_S,
+                                action.duration_s,
                                 left,
                                 right,
                                 len(pending) - 1,

@@ -42,8 +42,40 @@ CLEAR_MM = 400
 # Approach may continue through the creep uncertain band (25-40 cm). Stop when
 # the object is closer than this standoff (millimetres). Must be below the
 # uncertain-band ceiling (~40 cm) or approach still stops around 31 cm.
-# 15 cm is closer than 31 cm without ramming the target.
 APPROACH_STOP_MM = 150
+# Forward travel at the calibrated duty, derived from the measured in-place
+# turn: a 0.15 s pulse swings about 23 deg, and with a 0.12 m wheel separation
+# each wheel covers 0.06 m x 0.401 rad = 24 mm in that time, so roughly
+# 160 mm/s. Used only to shorten the last pulses; it is an estimate, not odometry.
+APPROACH_SPEED_MM_S = 160.0
+# The shortest pulse that reliably breaks stiction on this chassis. Travel per
+# pulse is therefore about 24 mm, which sets how precisely the standoff can be
+# hit.
+APPROACH_MIN_PULSE_S = 0.15
+
+
+def approach_pulse_duration(
+    range_mm: Optional[int],
+    *,
+    kind: str = '',
+    max_duration_s: float,
+) -> float:
+    """Shorten the pulse so one step cannot overshoot the standoff.
+
+    The range is checked before a pulse, never during it. At full duty a 1.2 s
+    pulse covers roughly 190 mm, so a robot that reads 300 mm and is not yet
+    inside the standoff would drive straight through the target and push it.
+    Closing distance therefore buys a proportionally shorter pulse.
+    """
+    detail = interpret_range_mm(range_mm, kind=kind)
+    millimetres = detail.get('range_mm')
+    if not detail.get('ok') or not isinstance(millimetres, int):
+        return max_duration_s
+    remaining = millimetres - APPROACH_STOP_MM
+    if remaining <= 0:
+        return APPROACH_MIN_PULSE_S
+    allowed = remaining / APPROACH_SPEED_MM_S
+    return max(APPROACH_MIN_PULSE_S, min(max_duration_s, allowed))
 
 _SYSRANGE_START = 0x00
 _SYSTEM_SEQUENCE_CONFIG = 0x01

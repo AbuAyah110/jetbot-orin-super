@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from jetbot_agent.hardware.vl53l0x import (
+    APPROACH_MIN_PULSE_S,
+    APPROACH_SPEED_MM_S,
     APPROACH_STOP_MM,
     CLEAR_MM,
     OUT_OF_RANGE_MM,
@@ -8,6 +12,7 @@ from jetbot_agent.hardware.vl53l0x import (
     READING_NO_TARGET,
     READING_VALID,
     STOP_MM,
+    approach_pulse_duration,
     approach_stop_reply,
     classify_reading,
     creep_refusal_reply,
@@ -97,10 +102,32 @@ def test_uncertain_band_blocks_creep_but_not_approach():
     assert detail.get('approach_stop') is True
     assert 'close enough' in approach_stop_reply(detail).lower()
 
-    blocked, detail = tof_near_field_blocks(
-        200, kind=READING_VALID, for_approach=True
-    )
+    # Still closing at 20 cm, which the old 31 cm stop ended early.
+    blocked, _ = tof_near_field_blocks(200, kind=READING_VALID, for_approach=True)
     assert blocked is False
+
+
+def test_final_pulses_shorten_so_one_step_cannot_overshoot():
+    full = 1.2
+    # Far away: no reason to shorten.
+    assert approach_pulse_duration(
+        2000, kind=READING_VALID, max_duration_s=full
+    ) == pytest.approx(full)
+
+    # At 30 cm a full pulse would travel about 19 cm, past the standoff.
+    close = approach_pulse_duration(300, kind=READING_VALID, max_duration_s=full)
+    assert close < full
+    assert close * APPROACH_SPEED_MM_S <= (300 - APPROACH_STOP_MM) + 1
+
+    # Never below the pulse that actually breaks stiction.
+    assert approach_pulse_duration(
+        155, kind=READING_VALID, max_duration_s=full
+    ) == pytest.approx(APPROACH_MIN_PULSE_S)
+
+    # An empty field is not a distance, so the normal pulse applies.
+    assert approach_pulse_duration(
+        OUT_OF_RANGE_MM, kind=READING_NO_TARGET, max_duration_s=full
+    ) == pytest.approx(full)
 
 
 def test_uncertain_band_blocks_approach_and_creep():
