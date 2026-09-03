@@ -40,6 +40,7 @@ from talk_and_drive import (  # noqa: E402
     search_forward_action,
     search_turn_action,
     strongest_color_lock,
+    verify_search_target,
     speak_understand_fail,
     calibrate_cosmos_action,
     clamp_test_action,
@@ -125,6 +126,13 @@ def test_search_only_promises_an_approach_it_can_actually_route(
     handoff = approach_handoff_speech(target)
     assert 'the my' not in handoff
     assert object_relative_request(handoff) is expected_route
+
+
+def test_search_refuses_ungrounded_targets_without_claiming_a_find():
+    visible, side, raw = verify_search_target(b'jpeg', 'my keys')
+    assert visible is False
+    assert side == ''
+    assert raw == 'ungrounded_search_target'
 
 
 def test_deictic_lock_prefers_center_object_over_red_edge_tint():

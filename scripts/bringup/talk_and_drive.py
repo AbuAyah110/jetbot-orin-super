@@ -52,7 +52,11 @@ for _extra_site in (
     if _extra_site.is_dir() and str(_extra_site) not in sys.path:
         sys.path.append(str(_extra_site))
 
-from jetbot_agent.hardware.vl53l0x import VL53L0X  # noqa: E402
+from jetbot_agent.hardware.vl53l0x import (  # noqa: E402
+    VL53L0X,
+    creep_refusal_reply,
+    tof_near_field_blocks,
+)
 from jetbot_agent.hardware.audio_interface import (  # noqa: E402
     apply_safe_mixer_baseline,
     mixer_report,
@@ -192,7 +196,7 @@ SPEAK_PLAY_MAX_CHARS = 64
 DESCRIBE_SPEAK_MAX_CHARS = 180
 DESCRIBE_FAIL_PHRASE = "I couldn't tell what I'm looking at"
 SEARCH_MAX_VIEWS = 6
-SEARCH_TURN_DURATION_S = 0.35
+SEARCH_TURN_DURATION_S = 0.15
 SEARCH_RELOCATE_DURATION_S = 0.40
 AROUND_TURN_DURATION_S = 0.35
 AROUND_FORWARD_DURATION_S = 0.45
@@ -545,6 +549,22 @@ def strongest_color_lock(jpeg: bytes):
         ):
             best = found
     return best
+
+
+def verify_search_target(jpeg: bytes, target: str) -> tuple[bool, str, str]:
+    """Colour-grounded search only.
+
+    Cosmos side guesses during a room search caused needless extra turns and
+    false finds for ungrounded names such as "my keys". A coloured target is
+    located from pixels alone; anything else is refused before the wheels turn.
+    """
+    if not target_color(target):
+        return False, '', 'ungrounded_search_target'
+    evidence = locate_color(jpeg, target)
+    raw = 'COLOR_GROUNDING: ' + json.dumps(evidence.as_dict())
+    if evidence.visible:
+        return True, evidence.side, raw
+    return False, '', raw
 
 
 def verify_visual_target(
@@ -1972,37 +1992,32 @@ def main() -> int:
                 try:
                     jpeg, frame_path = capture_current_frame(speech, 'creep')
                     range_mm = None
+                    range_kind = ''
                     if tof is not None:
                         range_mm = tof.range_mm()
-                    allowed, detail = occupancy_allows_creep(jpeg, range_mm=range_mm)
+                        range_kind = tof.last_kind
+                    allowed, detail = occupancy_allows_creep(
+                        jpeg, range_mm=range_mm, kind=range_kind
+                    )
                 except Exception as exc:
                     print('creep_gate_failed', exc, file=sys.stderr, flush=True)
                     allowed, detail = False, {'rejected': type(exc).__name__}
                     frame_path = Path('')
                 crept = False
                 if allowed:
+                    if detail.get('reason') == 'no_target_in_range':
+                        reply = 'Nothing within range ahead. Creeping forward one step.'
+                    else:
+                        reply = 'Creeping forward one step.'
+                    record_turn(speech, reply)
+                    if tts is not None:
+                        speak_short(tts, reply, playback, wav_dir, max_chars=120)
                     executor.execute(creep_forward_action())
                     executor.hard_stop()
                     crept = True
-                    reply = 'Creeping forward one step.'
-                elif detail.get('blocked'):
-                    millimetres = detail.get('range_mm')
-                    if isinstance(millimetres, int) and millimetres > 0:
-                        reply = (
-                            'My distance sensor sees something {0} centimetres '
-                            'ahead, so I stopped.'
-                        ).format(max(1, round(millimetres / 10.0)))
-                    else:
-                        reply = 'My distance sensor reports an obstacle, so I stopped.'
-                elif detail.get('source') == 'tof' and detail.get('rejected') == 'uncertain_band':
-                    millimetres = detail.get('range_mm')
-                    reply = (
-                        'My distance sensor reads {0} centimetres, which is too '
-                        'close to trust, so I stayed put.'
-                    ).format(max(1, round(millimetres / 10.0)))
                 else:
-                    reply = OCCUPANCY_REFUSE
-                record_turn(speech, reply)
+                    reply = creep_refusal_reply(detail)
+                    record_turn(speech, reply)
                 print(
                     json.dumps(
                         {
@@ -2017,7 +2032,7 @@ def main() -> int:
                     ),
                     flush=True,
                 )
-                if tts is not None:
+                if tts is not None and not allowed:
                     speak_short(tts, reply, playback, wav_dir, max_chars=120)
                 if args.once is not None:
                     break
@@ -2082,6 +2097,28 @@ def main() -> int:
                     if tts is not None:
                         speak_short(tts, reply, playback, wav_dir)
                     continue
+                if not target_color(target):
+                    reply = (
+                        'I can only search reliably for a red, blue, or green '
+                        'object. I cannot honestly locate {0} by shape alone.'
+                    ).format(target or 'that')[:120]
+                    record_turn(speech, reply)
+                    print(
+                        json.dumps(
+                            {
+                                'route': 'camera_search_refuse',
+                                'speech': speech,
+                                'target': target,
+                                'reply': reply,
+                            }
+                        ),
+                        flush=True,
+                    )
+                    if tts is not None:
+                        speak_short(tts, reply, playback, wav_dir, max_chars=120)
+                    if args.once is not None:
+                        break
+                    continue
                 if tts is not None:
                     speak_short(
                         tts,
@@ -2098,8 +2135,8 @@ def main() -> int:
                         jpeg, frame_path = capture_current_frame(
                             speech, 'search_{0}'.format(view + 1)
                         )
-                        visible, side, model_text = verify_visual_target(
-                            runtime, jpeg, target, ''
+                        visible, side, model_text = verify_search_target(
+                            jpeg, target
                         )
                         search_log.append(
                             {
@@ -2842,11 +2879,32 @@ def main() -> int:
                         break
                     continue
                 aborted = False
+                tof_stop_reply = ''
                 observed_side = plan.side
                 tick_number = 0
                 pending = expand_ticks(plan.steps)
                 try:
                     while pending and not stop_requested:
+                        if tof is not None:
+                            range_mm = tof.range_mm()
+                            blocked, tof_detail = tof_near_field_blocks(
+                                range_mm, kind=tof.last_kind
+                            )
+                            if blocked:
+                                aborted = True
+                                tof_stop_reply = creep_refusal_reply(tof_detail)
+                                print(
+                                    json.dumps(
+                                        {
+                                            'route': 'approach_tof_stop',
+                                            'tick': tick_number,
+                                            'occupancy': tof_detail,
+                                            'reply': tof_stop_reply,
+                                        }
+                                    ),
+                                    flush=True,
+                                )
+                                break
                         step = pending[0]
                         tick_number += 1
                         action = step_action(step)
@@ -2922,7 +2980,10 @@ def main() -> int:
                 if aborted and not stop_requested and tts is not None:
                     speak_short(
                         tts,
-                        ('I lost ' + target)[:SPEAK_PLAY_MAX_CHARS],
+                        (
+                            tof_stop_reply
+                            or ('I lost ' + target)
+                        )[:SPEAK_PLAY_MAX_CHARS],
                         playback,
                         wav_dir,
                     )

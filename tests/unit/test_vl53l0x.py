@@ -8,8 +8,10 @@ from jetbot_agent.hardware.vl53l0x import (
     READING_VALID,
     STOP_MM,
     classify_reading,
+    creep_refusal_reply,
     decode_range_mm,
     interpret_range_mm,
+    tof_near_field_blocks,
 )
 from jetbot_agent.robot_loop.demos import occupancy_allows_creep
 
@@ -74,6 +76,13 @@ def test_a_measured_obstacle_outranks_an_empty_field():
     allowed, detail = occupancy_allows_creep(b'', range_mm=millimetres, kind=kind)
     assert allowed is False
     assert detail['blocked'] is True
+
+
+def test_uncertain_band_blocks_approach_and_creep():
+    blocked, detail = tof_near_field_blocks(285, kind=READING_VALID)
+    assert blocked is True
+    assert detail['rejected'] == 'uncertain_band'
+    assert '28 centimetres' in creep_refusal_reply(detail)
 
 
 def test_gy530_status_11_keeps_a_real_range():

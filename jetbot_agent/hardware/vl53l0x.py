@@ -166,6 +166,42 @@ def interpret_range_mm(
     return detail
 
 
+def tof_near_field_blocks(
+    range_mm: Optional[int],
+    *,
+    kind: str = '',
+) -> tuple[bool, dict]:
+    """True when the ToF says something is too close to drive into.
+
+    Approach and creep both use this so contact is stopped before the wheels
+    push an object, not only when the path was already blocked at the gate.
+    """
+    detail = interpret_range_mm(range_mm, kind=kind)
+    if detail.get('blocked'):
+        return True, detail
+    if detail.get('rejected') == 'uncertain_band':
+        return True, detail
+    return False, detail
+
+
+def creep_refusal_reply(detail: dict) -> str:
+    """Spoken explanation when a creep pulse is refused."""
+    if detail.get('rejected') == 'sensor_fault':
+        return 'My distance sensor is not answering, so I stayed put.'
+    millimetres = detail.get('range_mm')
+    if detail.get('blocked') or detail.get('rejected') == 'uncertain_band':
+        if isinstance(millimetres, int) and 0 < millimetres < OUT_OF_RANGE_MM:
+            return (
+                'My distance sensor sees something {0} centimetres '
+                'ahead, so I stopped.'
+            ).format(max(1, round(millimetres / 10.0)))
+        return 'My distance sensor reports an obstacle, so I stopped.'
+    return (
+        'I cannot tell if the floor is clear without a distance sensor, '
+        'so I am staying put.'
+    )
+
+
 def decode_range_mm(*, status: int, raw_mm: int) -> int:
     """Keep a usable millimetre field; fail closed on hardware death or wrap."""
     if int(status) == _DEVICE_STATUS_HARDWARE_FAIL:

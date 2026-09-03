@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -193,12 +194,36 @@ def main() -> int:
         help="Report path (default: <repo>/data/test_reports/voice-TIMESTAMP.md)",
     )
     parser.add_argument("--list", action="store_true", help="Print tests without prompting")
+    parser.add_argument(
+        "--only",
+        type=str,
+        metavar="N[,N...]",
+        help="Run only these test numbers (e.g. 6 or 6,7). Use --list to see numbers.",
+    )
     args = parser.parse_args()
 
     if args.list:
         for index, case in enumerate(TESTS, 1):
             print(f'{index}. {case.name}: "{case.phrase}"')
         return 0
+
+    selected = list(TESTS)
+    if args.only:
+        try:
+            numbers = [int(part.strip()) for part in args.only.split(",") if part.strip()]
+        except ValueError:
+            print("Invalid --only value. Example: --only 6 or --only 6,7", file=sys.stderr)
+            return 2
+        bad = [n for n in numbers if n < 1 or n > len(TESTS)]
+        if bad:
+            print(
+                "Test number(s) out of range: {0} (valid: 1-{1})".format(
+                    ", ".join(str(n) for n in bad), len(TESTS)
+                ),
+                file=sys.stderr,
+            )
+            return 2
+        selected = [TESTS[n - 1] for n in numbers]
 
     stamp = dt.datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     # Anchored to the repo so a run from any directory lands in one place.
@@ -224,9 +249,10 @@ def main() -> int:
 
     rows: list[tuple[TestCase, str, str]] = []
     try:
-        for index, case in enumerate(TESTS, 1):
+        for run_index, case in enumerate(selected, 1):
+            full_index = TESTS.index(case) + 1
             print("\n" + "=" * 72)
-            print(f"TEST {index}/{len(TESTS)}: {case.name}")
+            print(f"TEST {full_index} ({run_index}/{len(selected)}): {case.name}")
             print(f"Motion: {'YES' if case.motion else 'NO'}")
             print(f"SETUP: {case.setup}")
             print(f'SAY EXACTLY: "{case.phrase}"')

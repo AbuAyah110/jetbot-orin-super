@@ -14,6 +14,7 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     LIVE_DURATION_MAX_S,
     LIVE_VX_MAX,
     LIVE_WZ_MAX,
+    INTENT_TURN_DURATION_S,
     NUDGE_DURATION_S,
     NUDGE_VX,
     ack_phrase,
@@ -120,6 +121,8 @@ def test_turns_are_wz_only_and_not_swapped():
     left = intent_action('left')
     right = intent_action('right')
     assert left.vx == 0.0 and right.vx == 0.0
+    assert left.duration_s == pytest.approx(INTENT_TURN_DURATION_S)
+    assert right.duration_s == pytest.approx(INTENT_TURN_DURATION_S)
     # +wz is a left turn, matching Robot.left(): left wheel back, right wheel forward.
     assert left.wz > 0.0
     assert right.wz < 0.0
@@ -130,17 +133,25 @@ def test_turns_are_wz_only_and_not_swapped():
 
 
 def test_every_motion_intent_uses_the_same_measured_duty():
-    """Forward, back, left, and right all spin wheels at |NUDGE_VX| for the same hold."""
+    """Forward/back use the travel pulse; turns use the calibrated swing pulse."""
     assert NUDGE_VX == pytest.approx(0.65)
     assert NUDGE_DURATION_S == pytest.approx(1.2)
+    assert INTENT_TURN_DURATION_S == pytest.approx(0.15)
     assert intent_wheels('forward') == (NUDGE_VX, NUDGE_VX)
     assert intent_wheels('back') == (-NUDGE_VX, -NUDGE_VX)
     assert intent_wheels('left') == (-NUDGE_VX, NUDGE_VX)
     assert intent_wheels('right') == (NUDGE_VX, -NUDGE_VX)
     assert intent_wheels('stop') == (0.0, 0.0)
-    for name in ('forward', 'back', 'left', 'right'):
+    for name in ('forward', 'back'):
         action = intent_action(name)
         assert action.duration_s == pytest.approx(NUDGE_DURATION_S)
+        wheels = unicycle_wheels(action.vx, action.wz)
+        assert wheels == pytest.approx(intent_wheels(name))
+        assert abs(wheels[0]) == pytest.approx(NUDGE_VX)
+        assert abs(wheels[1]) == pytest.approx(NUDGE_VX)
+    for name in ('left', 'right'):
+        action = intent_action(name)
+        assert action.duration_s == pytest.approx(INTENT_TURN_DURATION_S)
         wheels = unicycle_wheels(action.vx, action.wz)
         assert wheels == pytest.approx(intent_wheels(name))
         assert abs(wheels[0]) == pytest.approx(NUDGE_VX)
@@ -162,7 +173,10 @@ def test_nudges_survive_the_live_loop_clamp():
     assert NUDGE_VX <= LIVE_VX_MAX
     for intent in ('forward', 'back', 'left', 'right'):
         action = clamp_test_action(intent_action(intent))
-        assert action.duration_s == pytest.approx(NUDGE_DURATION_S)
+        expected_duration = (
+            INTENT_TURN_DURATION_S if intent in ('left', 'right') else NUDGE_DURATION_S
+        )
+        assert action.duration_s == pytest.approx(expected_duration)
         assert action.duration_s <= LIVE_DURATION_MAX_S
         assert abs(action.vx) <= LIVE_VX_MAX
         assert abs(action.wz) <= LIVE_WZ_MAX

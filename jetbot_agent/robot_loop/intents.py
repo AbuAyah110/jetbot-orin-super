@@ -31,6 +31,10 @@ from jetbot_agent.robot_loop.drive_calibration import (
 CALIBRATION = load_calibration()
 NUDGE_VX = CALIBRATION.speed
 NUDGE_DURATION_S = CALIBRATION.duration_s
+# Measured on this chassis: a 0.15 s in-place pulse at the stiction-clearing
+# duty swings about 23 degrees. Forward/back still use the full 1.2 s travel
+# pulse; bare "turn left/right" must not spin ~270 degrees.
+INTENT_TURN_DURATION_S = 0.15
 LIVE_VX_MAX = SPEED_HARD_MAX
 LIVE_DURATION_MAX_S = DURATION_HARD_MAX
 # unicycle_wheels() scales wz by 0.4. A 0.65-duty in-place turn needs
@@ -592,11 +596,16 @@ def intent_action(intent: str) -> RobotAction:
         wz = -NUDGE_WZ
     else:
         return RobotAction(kind='stop', vx=0.0, wz=0.0, duration_s=0.0, reason='intent_unknown')
+    duration_s = (
+        INTENT_TURN_DURATION_S
+        if intent in (LEFT, RIGHT)
+        else min(NUDGE_DURATION_S, LIVE_DURATION_MAX_S)
+    )
     return RobotAction(
         kind='drive',
         vx=max(-LIVE_VX_MAX, min(LIVE_VX_MAX, vx)),
         wz=max(-LIVE_WZ_MAX, min(LIVE_WZ_MAX, wz)),
-        duration_s=min(NUDGE_DURATION_S, LIVE_DURATION_MAX_S),
+        duration_s=duration_s,
         reason='intent_{0}'.format(intent),
     )
 
