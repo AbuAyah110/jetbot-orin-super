@@ -39,6 +39,11 @@ READING_FAULT = 'fault'
 # Creep / near-field stop. Indoor JetBot should not lunge into something closer.
 STOP_MM = 250
 CLEAR_MM = 400
+# Approach may continue through the creep uncertain band (25-40 cm). Stop when
+# the object is closer than this standoff (millimetres). Must be below the
+# uncertain-band ceiling (~40 cm) or approach still stops around 31 cm.
+# 15 cm is closer than 31 cm without ramming the target.
+APPROACH_STOP_MM = 150
 
 _SYSRANGE_START = 0x00
 _SYSTEM_SEQUENCE_CONFIG = 0x01
@@ -170,18 +175,39 @@ def tof_near_field_blocks(
     range_mm: Optional[int],
     *,
     kind: str = '',
+    for_approach: bool = False,
 ) -> tuple[bool, dict]:
     """True when the ToF says something is too close to drive into.
 
-    Approach and creep both use this so contact is stopped before the wheels
-    push an object, not only when the path was already blocked at the gate.
+    Creep treats the 25-40 cm uncertain band as a refusal. Approach keeps
+    moving through that band and stops only once the object is within
+    :data:`APPROACH_STOP_MM`, which is much closer than the old 31 cm stop.
     """
     detail = interpret_range_mm(range_mm, kind=kind)
+    if for_approach:
+        millimetres = detail.get('range_mm')
+        if detail.get('ok') and isinstance(millimetres, int):
+            if 0 < millimetres < APPROACH_STOP_MM:
+                detail = dict(detail)
+                detail['blocked'] = True
+                detail['approach_stop'] = True
+                return True, detail
+        return False, detail
     if detail.get('blocked'):
         return True, detail
     if detail.get('rejected') == 'uncertain_band':
         return True, detail
     return False, detail
+
+
+def approach_stop_reply(detail: dict) -> str:
+    """Spoken line when approach ends because the target is close enough."""
+    millimetres = detail.get('range_mm')
+    if isinstance(millimetres, int) and 0 < millimetres < OUT_OF_RANGE_MM:
+        return (
+            'I am close enough. My distance sensor reads {0} centimetres ahead.'
+        ).format(max(1, round(millimetres / 10.0)))[:120]
+    return 'I am close enough, so I stopped.'
 
 
 def creep_refusal_reply(detail: dict) -> str:

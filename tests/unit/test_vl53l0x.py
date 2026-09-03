@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from jetbot_agent.hardware.vl53l0x import (
+    APPROACH_STOP_MM,
     CLEAR_MM,
     OUT_OF_RANGE_MM,
     READING_FAULT,
     READING_NO_TARGET,
     READING_VALID,
     STOP_MM,
+    approach_stop_reply,
     classify_reading,
     creep_refusal_reply,
     decode_range_mm,
@@ -76,6 +78,29 @@ def test_a_measured_obstacle_outranks_an_empty_field():
     allowed, detail = occupancy_allows_creep(b'', range_mm=millimetres, kind=kind)
     assert allowed is False
     assert detail['blocked'] is True
+
+
+def test_uncertain_band_blocks_creep_but_not_approach():
+    blocked, detail = tof_near_field_blocks(310, kind=READING_VALID)
+    assert blocked is True
+    assert detail['rejected'] == 'uncertain_band'
+
+    blocked, detail = tof_near_field_blocks(
+        310, kind=READING_VALID, for_approach=True
+    )
+    assert blocked is False
+
+    blocked, detail = tof_near_field_blocks(
+        140, kind=READING_VALID, for_approach=True
+    )
+    assert blocked is True
+    assert detail.get('approach_stop') is True
+    assert 'close enough' in approach_stop_reply(detail).lower()
+
+    blocked, detail = tof_near_field_blocks(
+        200, kind=READING_VALID, for_approach=True
+    )
+    assert blocked is False
 
 
 def test_uncertain_band_blocks_approach_and_creep():

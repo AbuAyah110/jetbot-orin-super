@@ -54,6 +54,7 @@ for _extra_site in (
 
 from jetbot_agent.hardware.vl53l0x import (  # noqa: E402
     VL53L0X,
+    approach_stop_reply,
     creep_refusal_reply,
     tof_near_field_blocks,
 )
@@ -2888,11 +2889,11 @@ def main() -> int:
                         if tof is not None:
                             range_mm = tof.range_mm()
                             blocked, tof_detail = tof_near_field_blocks(
-                                range_mm, kind=tof.last_kind
+                                range_mm, kind=tof.last_kind, for_approach=True
                             )
                             if blocked:
                                 aborted = True
-                                tof_stop_reply = creep_refusal_reply(tof_detail)
+                                tof_stop_reply = approach_stop_reply(tof_detail)
                                 print(
                                     json.dumps(
                                         {
