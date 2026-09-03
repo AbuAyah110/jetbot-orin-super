@@ -6,8 +6,10 @@ from jetbot_agent.robot_loop.conversation import (
     CONVERSATION_FALLBACK,
     CONVERSATION_MAX_TOKENS,
     MOTION_CLAIM_REPLY,
+    SIGHT_CLAIM_REPLY,
     build_conversation_prompt,
     claims_motion,
+    claims_sight,
     conversation_action,
 )
 
@@ -209,6 +211,52 @@ def test_spoken_motion_claims_are_replaced_with_an_honest_refusal(say):
 )
 def test_ordinary_answers_are_not_treated_as_motion_claims(say):
     assert claims_motion(say) is False
+
+
+def test_a_motion_ack_after_a_first_sentence_is_still_caught():
+    # Logged live: the ack sat in the second sentence, so a start-anchored
+    # guard passed it and the robot reported moving while parked.
+    assert claims_motion('Found blue puck. Moving toward it.') is True
+
+
+@pytest.mark.parametrize(
+    'say',
+    [
+        'Found blue puck. Moving toward it.',
+        'I see the blue object in front of me.',
+        'I found your keys on the table.',
+        'Spotted a red box on my right.',
+    ],
+)
+def test_a_parked_text_turn_cannot_report_a_sighting(say):
+    # No image reached the model on this turn, so any sighting is invented.
+    assert claims_sight(say) is True
+    runtime = FakeRuntime(
+        '{"action":"speak","vx":0,"wz":0,"duration_s":0,'
+        '"say":"' + say + '","goal":"","reason":"conversation"}'
+    )
+
+    action, _ = conversation_action(runtime, 'find blue object and move to it')
+
+    assert action.kind == 'speak'
+    assert action.say in {MOTION_CLAIM_REPLY, SIGHT_CLAIM_REPLY}
+    assert action.reason in {
+        'conversation_motion_claim',
+        'conversation_sight_claim',
+    }
+
+
+@pytest.mark.parametrize(
+    'say',
+    [
+        'You told me the backpack is on the couch.',
+        'Earlier you said your keys were on the table.',
+        'Saturn is the sixth planet from the Sun.',
+        'I do not know the answer to that.',
+    ],
+)
+def test_memory_answers_are_not_sighting_claims(say):
+    assert claims_sight(say) is False
 
 
 def test_conversation_prompt_forbids_claiming_movement():

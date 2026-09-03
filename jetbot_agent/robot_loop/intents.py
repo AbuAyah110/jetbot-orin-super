@@ -142,12 +142,20 @@ _SEARCH_PATTERN = re.compile(
 # A follow-on "and go to it" clause, and the room locative, are not part of the
 # object's name. Applied repeatedly so "red object in the room and go to it"
 # reduces to "red object".
+# The tense of that clause is not reliable either: ASR returned "and moved
+# towards it" for a spoken "and move towards it", which left the past-tense
+# wording inside the target name and off the approach chain.
 _SEARCH_TRAILERS = (
     re.compile(
-        r'\s+and\s+(?:go|drive|move|come|head|roll|walk)\s+'
+        r'\s+and\s+(?:go|goes|went|drive|drives|drove|move|moves|moved'
+        r'|come|comes|came|head|heads|headed|roll|rolls|rolled'
+        r'|walk|walks|walked)\s+'
         r'(?:over\s+)?(?:to|toward|towards)\s+(?:it|there)$'
     ),
-    re.compile(r'\s+and\s+(?:approach|go\s+to)\s+(?:it|there)$'),
+    re.compile(
+        r'\s+and\s+(?:approach(?:es|ed)?|go\s+to|goes\s+to|went\s+to)\s+'
+        r'(?:it|there)$'
+    ),
     re.compile(r'\s+(?:in|inside|around)\s+(?:the\s+)?(?:room|area|house)$'),
     re.compile(r'\s+(?:please|for\s+me|now)$'),
 )
@@ -155,8 +163,11 @@ _SEARCH_TRAILERS = (
 # The same clause, used as the signal to chain an approach after the search.
 _SEARCH_APPROACH_PATTERN = re.compile(
     r'\band\s+(?:'
-    r'(?:go|drive|move|come|head|roll|walk)\s+(?:over\s+)?(?:to|toward|towards)'
-    r'|approach'
+    r'(?:go|goes|went|drive|drives|drove|move|moves|moved|come|comes|came'
+    r'|head|heads|headed|roll|rolls|rolled|walk|walks|walked)\s+'
+    r'(?:over\s+)?(?:to|toward|towards)'
+    r'|approach(?:es|ed)?'
+    r'|go(?:es)?\s+to'
     r')\s+(?:it|there)\b'
 )
 
@@ -285,11 +296,45 @@ _WHERE_NON_OBJECT = re.compile(
 )
 
 
+# Zipformer's small English model reliably confuses two words that decide
+# whether a search request is even recognised: "find the blue object" arrived as
+# "FINE BLUE OBJECT" and "FINE BLEW OBJECT". Neither reached the search route,
+# so the utterance fell through to parked conversation, which answered "Found
+# blue puck. Moving toward it." while the wheels never turned.
+#
+# Each repair is admitted only in front of a concrete object noun, so ordinary
+# speech is untouched: "I am fine" and "the wind blew" keep their own words.
+_ASR_OBJECT_NOUN = (
+    r'(?:object|puck|ball|box|cube|block|bottle|cup|thing|target|toy)'
+)
+_ASR_COLOUR = r'(?:red|blue|blew|green|yellow|orange|purple|black|white)'
+_ASR_REPAIRS = (
+    (
+        re.compile(
+            r'\bfine\b(?=\s+(?:the\s+|a\s+|an\s+)?(?:' + _ASR_COLOUR + r'\s+)?'
+            + _ASR_OBJECT_NOUN + r'\b)'
+        ),
+        'find',
+    ),
+    (
+        re.compile(r'\bblew\b(?=\s+(?:' + _ASR_OBJECT_NOUN + r'\b|one\b))'),
+        'blue',
+    ),
+)
+
+
+def repair_transcript(speech: str) -> str:
+    """Fix the bounded ASR confusions that would misroute a request."""
+    for pattern, replacement in _ASR_REPAIRS:
+        speech = pattern.sub(replacement, speech)
+    return speech
+
+
 def normalize_transcript(text: str) -> str:
     """Lowercase and strip punctuation. ASR returns UPPERCASE with repeats."""
     lowered = (text or '').lower()
     cleaned = re.sub(r"[^a-z0-9']+", ' ', lowered)
-    return ' '.join(cleaned.split())
+    return repair_transcript(' '.join(cleaned.split()))
 
 
 def strip_politeness(speech: str) -> str:
@@ -532,6 +577,27 @@ def search_target(text: str) -> str:
             break
         target = trimmed
     return target[:48].strip()
+
+
+# "Find an object and move towards it" names no colour, and colour is the only
+# grounding this robot has. Refusing it outright meant the sweep never ran, so a
+# plain find request stood still. A nameless target is instead resolved to
+# whatever supported colour the sweep actually locks onto, which is still
+# pixel-grounded and still refuses named-but-ungrounded things like "my keys".
+_GENERIC_OBJECT_TARGET = re.compile(
+    r'^(?:any|some|one)?\s*'
+    r'(?:colou?red|colou?rful|bright|nearest|closest|first)?\s*'
+    r'(?:object|thing|item|shape|one)s?$'
+    r'|^(?:anything|something)$'
+)
+
+
+def is_generic_object_target(target: str) -> bool:
+    """True when a search target names an object without naming which one."""
+    speech = normalize_transcript(target)
+    if not speech:
+        return False
+    return bool(_GENERIC_OBJECT_TARGET.match(speech))
 
 
 def search_wants_approach(text: str) -> bool:

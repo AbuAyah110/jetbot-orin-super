@@ -18,6 +18,10 @@ MOTION_CLAIM_REPLY = (
     "I can't do that move. I can go forward or back, turn, or approach or go "
     'around something I can see.'
 )
+SIGHT_CLAIM_REPLY = (
+    "I didn't look just then, so I can't say what is there. Ask me what I see "
+    'and I will take a fresh look.'
+)
 
 # This route cannot reach the motors, so a first-person motion claim is always
 # false. Asked to "move around the object in front of you", Cosmos answered
@@ -43,13 +47,50 @@ _MOTION_CLAIM_PATTERNS = (
     ),
     # Bare acknowledgement with the subject dropped: "Okay, turning around it
     # now." This is the shape of a real motion ack, so it reads as one.
+    #
+    # Anchoring this at the start of the reply alone was not enough. "Found blue
+    # puck. Moving toward it." put the ack in the second sentence and passed the
+    # guard, which is the reply the robot gave while parked and silent.
     re.compile(
-        r'^\W*(?:okay|ok|sure|alright|right|yes|yep)?[\s,.!-]*'
+        r'(?:^|[.!?]\s+)\W*(?:okay|ok|sure|alright|right|yes|yep)?[\s,.!-]*'
         + _MOTION_VERBS
         + r'\b',
         re.IGNORECASE,
     ),
 )
+
+# Without an image this turn has no eyes, so any sighting it reports is
+# invented. Primed by a history of real approaches, Cosmos answered a text-only
+# turn with "Found blue puck", naming an object it had never been shown.
+_SIGHT_CLAIM_PATTERNS = (
+    re.compile(
+        r"\b(?:i\s+(?:can\s+)?see|i\s+found|i'?ve\s+found|i\s+have\s+found"
+        r"|i\s+spotted|i\s+can\s+spot|i\s+see)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'(?:^|[.!?]\s+)\W*(?:okay|ok|sure|alright)?[\s,.!-]*'
+        r'(?:found|spotted|located|seeing)\b',
+        re.IGNORECASE,
+    ),
+)
+
+
+# Answering from stored memory is not a sighting claim. "You told me the
+# backpack is on the couch" reports what was said, not what is being seen.
+_RECALL_MARKERS = re.compile(
+    r'\b(?:you\s+(?:told|said|mentioned)|earlier|before|last\s+time'
+    r'|i\s+remember|from\s+memory|you\s+asked)\b',
+    re.IGNORECASE,
+)
+
+
+def claims_sight(say: str) -> bool:
+    """True when a reply reports seeing something right now."""
+    text = say or ''
+    if _RECALL_MARKERS.search(text):
+        return False
+    return any(pattern.search(text) for pattern in _SIGHT_CLAIM_PATTERNS)
 
 
 def claims_motion(say: str) -> bool:
@@ -175,6 +216,16 @@ def conversation_action(
                 kind="speak",
                 say=MOTION_CLAIM_REPLY,
                 reason="conversation_motion_claim",
+                raw_ok=True,
+            ),
+            raw,
+        )
+    if image_jpeg is None and claims_sight(action.say):
+        return (
+            RobotAction(
+                kind="speak",
+                say=SIGHT_CLAIM_REPLY,
+                reason="conversation_sight_claim",
                 raw_ok=True,
             ),
             raw,

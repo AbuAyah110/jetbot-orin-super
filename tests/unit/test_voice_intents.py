@@ -23,12 +23,14 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     intent_wheels,
     is_around_request,
     is_describe_request,
+    is_generic_object_target,
     is_motion_command,
     is_plan_preview_request,
     is_search_request,
     is_visual_question,
     match_intent,
     memory_fact,
+    normalize_transcript,
     is_where_request,
     search_target,
     search_wants_approach,
@@ -314,6 +316,60 @@ def test_a_viewpoint_is_described_not_located(transcript):
 def test_a_named_object_still_reaches_the_where_route(transcript, target):
     assert where_target(transcript) == target
     assert is_where_request(transcript) is True
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        # Exactly what Zipformer returned for "find the blue object and move
+        # towards it". Both mishearings left the search route unmatched, so the
+        # request was answered by parked conversation and nothing moved.
+        'FINE BLUE OBJECT AND MOVED TOWARDS IT',
+        'FINE BLEW OBJECT AND MOVED TOWARDS IT',
+        'FIND THE BLUE OBJECT AND MOVED TOWARDS IT',
+    ],
+)
+def test_misheard_find_still_reaches_the_search_route(transcript):
+    assert is_search_request(transcript) is True
+    assert search_target(transcript) == 'blue object'
+    assert search_wants_approach(transcript) is True
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        'I AM FINE',
+        'THAT IS FINE THANK YOU',
+        'THE WIND BLEW ALL NIGHT',
+    ],
+)
+def test_repairs_do_not_rewrite_ordinary_speech(transcript):
+    speech = normalize_transcript(transcript)
+    assert 'find' not in speech
+    assert 'blue' not in speech
+    assert is_search_request(transcript) is False
+
+
+@pytest.mark.parametrize(
+    'transcript,target',
+    [
+        ('FIND AN OBJECT AND MOVE TOWARDS IT', 'object'),
+        ('FIND THE OBJECT', 'object'),
+        ('LOOK AROUND THE ROOM FOR SOMETHING', 'something'),
+        ('FIND ANY COLOURED OBJECT', 'any coloured object'),
+    ],
+)
+def test_a_nameless_object_is_a_generic_search_not_a_refusal(transcript, target):
+    # These used to be refused before the sweep ran, so a plain find request
+    # stood still. The colour is resolved from whatever the sweep locks onto.
+    assert is_search_request(transcript) is True
+    assert search_target(transcript) == target
+    assert is_generic_object_target(target) is True
+
+
+@pytest.mark.parametrize('target', ['my keys', 'blue object', 'chair', 'the dog'])
+def test_named_targets_are_not_generic(target):
+    assert is_generic_object_target(target) is False
 
 
 def test_approach_is_not_mistaken_for_room_search():

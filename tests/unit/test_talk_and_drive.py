@@ -39,6 +39,7 @@ from talk_and_drive import (  # noqa: E402
     pcm16_rms,
     search_forward_action,
     search_turn_action,
+    search_any_color,
     strongest_color_lock,
     verify_search_target,
     speak_understand_fail,
@@ -133,6 +134,44 @@ def test_search_refuses_ungrounded_targets_without_claiming_a_find():
     assert visible is False
     assert side == ''
     assert raw == 'ungrounded_search_target'
+
+
+def test_a_nameless_search_resolves_to_the_colour_it_locks_onto():
+    # "Find an object" used to be refused before the sweep ran. It now names
+    # whatever colour the pixels support, so the reply and any chained approach
+    # both refer to a target the approach route can actually take.
+    import io
+    from PIL import Image, ImageDraw
+
+    image = Image.new('RGB', (448, 448), (30, 30, 30))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((60, 130, 200, 310), fill='green')
+    stream = io.BytesIO()
+    image.save(stream, format='JPEG', quality=95)
+
+    visible, side, resolved, raw = search_any_color(stream.getvalue())
+
+    assert visible is True
+    assert resolved == 'green object'
+    assert side in {'left', 'center', 'right'}
+    assert 'COLOR_GROUNDING' in raw
+    assert object_relative_request(approach_handoff_speech(resolved)) is True
+
+
+def test_a_nameless_search_over_an_empty_floor_finds_nothing():
+    import io
+    from PIL import Image
+
+    image = Image.new('RGB', (448, 448), (90, 90, 92))
+    stream = io.BytesIO()
+    image.save(stream, format='JPEG', quality=95)
+
+    visible, side, resolved, raw = search_any_color(stream.getvalue())
+
+    assert visible is False
+    assert resolved == ''
+    assert side == ''
+    assert raw == 'no_colour_lock'
 
 
 def test_deictic_lock_prefers_center_object_over_red_edge_tint():

@@ -121,6 +121,7 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     is_creep_request,
     is_deictic_target,
     is_describe_request,
+    is_generic_object_target,
     is_motion_command,
     is_place_query,
     is_place_teach,
@@ -551,6 +552,23 @@ def strongest_color_lock(jpeg: bytes):
         ):
             best = found
     return best
+
+
+def search_any_color(jpeg: bytes) -> tuple[bool, str, str, str]:
+    """Resolve a nameless search target to the clearest supported colour.
+
+    Returns the colour phrase alongside the side so the spoken reply and any
+    chained approach both name what the pixels found, not what was asked for.
+    """
+    lock = strongest_color_lock(jpeg)
+    if lock is None:
+        return False, '', '', 'no_colour_lock'
+    return (
+        True,
+        lock.side,
+        '{0} object'.format(lock.color),
+        'COLOR_GROUNDING: ' + json.dumps(lock.as_dict()),
+    )
 
 
 def verify_search_target(jpeg: bytes, target: str) -> tuple[bool, str, str]:
@@ -2099,7 +2117,11 @@ def main() -> int:
                     if tts is not None:
                         speak_short(tts, reply, playback, wav_dir)
                     continue
-                if not target_color(target):
+                # A nameless "find an object" is answered by sweeping for any
+                # supported colour; only a named target with no colour grounding
+                # is refused.
+                generic_target = is_generic_object_target(target)
+                if not generic_target and not target_color(target):
                     reply = (
                         'I can only search reliably for a red, blue, or green '
                         'object. I cannot honestly locate {0} by shape alone.'
@@ -2122,9 +2144,14 @@ def main() -> int:
                         break
                     continue
                 if tts is not None:
+                    intro = (
+                        'I will look around for a red, blue or green object'
+                        if generic_target
+                        else 'I will look for ' + target
+                    )
                     speak_short(
                         tts,
-                        ('I will look for ' + target)[:SPEAK_PLAY_MAX_CHARS],
+                        intro[:SPEAK_PLAY_MAX_CHARS],
                         playback,
                         wav_dir,
                     )
@@ -2137,9 +2164,19 @@ def main() -> int:
                         jpeg, frame_path = capture_current_frame(
                             speech, 'search_{0}'.format(view + 1)
                         )
-                        visible, side, model_text = verify_search_target(
-                            jpeg, target
-                        )
+                        if generic_target:
+                            visible, side, resolved, model_text = search_any_color(
+                                jpeg
+                            )
+                            if visible:
+                                # Speak and approach the colour that was found,
+                                # so the reply and the handoff name the same
+                                # thing the pixels located.
+                                target = resolved
+                        else:
+                            visible, side, model_text = verify_search_target(
+                                jpeg, target
+                            )
                         search_log.append(
                             {
                                 'view': view + 1,
