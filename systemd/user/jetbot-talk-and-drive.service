@@ -1,0 +1,22 @@
+[Unit]
+Description=JetBot talk-and-drive (VAD listen, Cosmos, I2C PWM)
+After=default.target
+# USB audio and Argus need a few seconds after a battery boot.
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/home/impulse110/Documents/jetbot-orin-super
+Environment=PYTHONUNBUFFERED=1
+Environment=EDGELLM_PLUGIN_PATH=/home/impulse110/Documents/jetbot-orin-super/third_party/tensorrt-edge-llm/build/libNvInfer_edgellm_plugin.so
+ExecStartPre=/bin/sleep 20
+ExecStart=/home/impulse110/Documents/jetbot-orin-super/.venv/bin/python3 /home/impulse110/Documents/jetbot-orin-super/scripts/bringup/talk_and_drive.py --auto-listen --mic-seconds 8 --leave-loaded
+Restart=on-failure
+RestartSec=8
+TimeoutStartSec=240
+TimeoutStopSec=20
+KillMode=mixed
+
+[Install]
+WantedBy=default.target

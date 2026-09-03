@@ -72,7 +72,26 @@ That worst fixture is the one that most resembles this robot's actual noise floo
 
 **RNNoise was never a candidate to replace AEC and the measurements confirm it cannot be one:** on the F2 echo fixture the APM cancels 2137× against RNNoise's 4.5×.
 
-## F4 — NVIDIA FastConformer ASR
+## Current F4/F5 default — Sherpa-ONNX Zipformer + Piper
+
+The production default is now one Python process hosting two Sherpa-ONNX C++ objects: an `OfflineRecognizer` for Zipformer and an `OfflineTts` for Piper VITS. Both use the CPU provider; no CUDA provider, PyTorch, NeMo, GPU memory, or second inference framework is involved. WebRTC APM remains the F2 microphone front end unchanged.
+
+Gate: `./scripts/bringup/test_zipformer_piper.sh`. It synthesizes "Testing one two three." to a 16 kHz mono WAV, transcribes that short offline fixture in the same process, and writes the JSON report to `data/bringup/zipformer_piper.json`. Pass the model's bundled WAV with `--wav data/models/zipformer/sherpa-onnx-zipformer-small-en-2023-06-26/test_wavs/0.wav` for the longer LibriSpeech check. `--live-capture` is available only when `/dev/snd` is exposed and resolves the USB endpoint by ALSA name; playback is never automatic.
+
+Official k2-fsa release artifacts:
+
+- ASR: `sherpa-onnx-zipformer-small-en-2023-06-26.tar.bz2`, 112,232,184-byte archive, SHA256 `c8bff1091c26c49731cddbcd60ef18061142ea11523df1b73bf1b14451b9c15e`, from `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-small-en-2023-06-26.tar.bz2`. Only the int8 encoder, decoder, and joiner are retained; the extracted active directory is 28,412,711 bytes.
+- TTS: `vits-piper-en_US-lessac-low-int8.tar.bz2`, 21,070,568-byte archive, SHA256 `af63fbe60d8bdcfccdee61ba057304a11dfc077145da383d4d351ec3c594d5e2`, from `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-lessac-low-int8.tar.bz2`. The extracted graph, tokens, model metadata, and espeak-ng data total 36,577,511 bytes.
+
+Measured on the Jetson with 2 threads and `sherpa-onnx==1.13.6`: both models loaded in 3.99 s; Piper generated 1.3895 s of audio in 0.353 s (RTF 0.254); Zipformer returned `TESTING ONE TWO THREE` in 0.060 s (RTF 0.043, WER 0.00). Peak process RSS was **166,220 KiB = 162.3 MiB = 170.2 decimal MB**, below the target under both unit conventions. GPU/VRAM use was **0 MiB**. This is the practical "single C++ process" arrangement supplied by the Python bindings; there is no stock native Sherpa binary that combines both agent APIs.
+
+A five-second capture from the name-resolved live USB microphone was also transcribed successfully (non-empty transcript, ASR RTF 0.044). With Piper resident in the same process that run peaked at **196,776 KiB = 192.2 MiB = 201.5 decimal MB**. It passes a 200 MiB budget but narrowly fails a strict 200,000,000-byte definition of "200 MB"; the sub-200 MB claim is therefore valid only for the short offline turn unless the budget explicitly means MiB. Live playback was not attempted.
+
+The longer 6.625 s bundled ASR fixture also returns WER 0.00, but retaining its larger activation arena while synthesizing and re-decoding another utterance can exceed 200 MiB. These results are short-turn measurements, not a guarantee for unbounded utterance length. Production must cap turns.
+
+Dependency inventory found **no package unique to the retired models**: `sherpa-onnx` and `sherpa-onnx-core` are reused here, while NumPy, PyYAML, and `pywebrtc-audio` remain required. Neither torch nor NeMo is installed. The retired FastConformer and Matcha/HiFi-GAN files occupied about 668 MiB under `data/models/f4` and `data/models/f5`; they and their old fetch/test scripts were removed.
+
+## Historical F4 evidence — NVIDIA FastConformer ASR
 
 Install a Jetson-compatible NVIDIA FastConformer model/runtime independently of the production agent. Transcribe one known 16 kHz mono WAV, first without APM and then with the F2 output where useful.
 
@@ -80,7 +99,7 @@ Pass: the expected speech produces a non-empty, intelligible transcript. Record 
 
 ### Result 2026-08-25 — PASS (CPU, int8 ONNX)
 
-Gate: `./scripts/bringup/test_fastconformer_asr.sh` (fetches models, then runs the sweep). Report: `data/bringup/f4_fastconformer_asr.json` (local artifact — `data/bringup/**` is gitignored; re-run the gate to regenerate it). Each configuration runs in its own worker process so peak RSS is attributed to that configuration alone.
+The retired gate was `scripts/bringup/test_fastconformer_asr.sh`; it and its fetch script were deleted with the old weights. The measurements below are retained as historical evidence and are not reproducible without deliberately restoring that retired model.
 
 **Install path.** NeMo was not installed. `nemo_toolkit[asr]` requires PyTorch, and no torch is present in `.venv` or the system interpreter; the JetPack-6 aarch64 CUDA wheels for torch/onnxruntime-gpu are not on any index reachable from the bring-up sandbox. Rather than force a multi-gigabyte, likely-broken stack onto an 8 GB device, F4 uses the NVIDIA NeMo FastConformer encoders **already exported to ONNX**, executed by `sherpa-onnx==1.13.6` (single 4.2 MB wheel plus a 13.1 MB core wheel; bundles its own onnxruntime and the matching NeMo log-mel front end and CTC decoder).
 
@@ -130,7 +149,7 @@ The streaming model costs about 7.5× more per second of audio (RTF 0.339) becau
 
 Per the stage rules, optimization (TensorRT export, GPU provider) stays open rather than becoming a requirement — F4 already passes with margin at 2 threads.
 
-## F5 — NVIDIA FastPitch + HiFi-GAN TTS
+## Historical F5 evidence — NVIDIA FastPitch + HiFi-GAN TTS
 
 Run the stages explicitly: text → FastPitch mel spectrogram → HiFi-GAN waveform → WAV. Validate the generated file before playback, then perform one low-volume, one-shot `aplay` with capture stopped and sidetone off.
 
@@ -138,7 +157,7 @@ Pass: both model stages complete and the WAV is intelligible without clipping. R
 
 ### Result 2026-08-25 — PASS with a documented substitution (CPU, fp32 ONNX)
 
-Gate: `./scripts/bringup/test_matcha_hifigan_tts.sh` (fetches models, then runs the sweep). Report: `data/bringup/f5_matcha_hifigan_tts.json` (local artifact — `data/bringup/**` is gitignored; re-run the gate to regenerate it). Each configuration runs in its own worker process so peak RSS is attributed to that configuration alone.
+The retired gate was `scripts/bringup/test_matcha_hifigan_tts.sh`; it and its fetch script were deleted with the old weights. The measurements below remain historical evidence, not the current default.
 
 **Substitution: the mel generator is Matcha-TTS, not FastPitch. The vocoder is genuinely HiFi-GAN.** The two-stage shape the gate asks for is preserved — text → mel spectrogram → HiFi-GAN → waveform — and only the acoustic model differs. This was not a silent swap; the FastPitch path was chased to the point of failure first:
 
@@ -225,7 +244,7 @@ Per the stage rules, optimization (TensorRT export, GPU provider) stays open rat
 
 Attempt duplex operation only after F2 passes. Route playback samples to both ALSA and the APM far-end/reference input with measured delay alignment. Pipeline:
 
-`ALSA capture → WebRTC APM → VAD → FastConformer → agent boundary → FastPitch → HiFi-GAN → reference tap → ALSA playback`
+`ALSA capture → WebRTC APM → VAD → Zipformer → agent boundary → Piper VITS → reference tap → ALSA playback`
 
 Add a feedback watchdog that immediately mutes playback and stops capture/playback on sustained clipping, runaway level, missing/stale AEC reference, processing backlog, or operator stop. Begin with the speaker physically separated or at minimum safe volume.
 

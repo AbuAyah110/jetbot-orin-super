@@ -5,5 +5,15 @@ PyYAML>=6.0
 numpy>=2.0,<3
 pywebrtc-audio==0.1.0
 
-# FastConformer / FastPitch+HiFi-GAN runtimes are not pinned yet (F4/F5).
+# Stage F4/F5 — one CPU runtime for Zipformer ASR and Piper VITS TTS.
+sherpa-onnx==1.13.6
+
 # RNNoise remains an optional F3 benchmark dependency.
+
+# Optional locked-loop CPU dependencies. These do not install transformers or
+# model weights; BGE-small remains disabled until a local CPU ONNX is approved.
+tokenizers==0.23.1
+lancedb==0.37.1
+onnxruntime==1.23.2
+# Only needed to reproduce bge-small-int8.onnx from the local FP32 graph.
+onnx==1.22.0

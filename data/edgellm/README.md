@@ -1,0 +1,55 @@
+# Local Edge-LLM runtime data
+
+This directory is the canonical on-device home for generated, non-git payloads:
+
+```text
+data/edgellm/
+  cosmos/
+    onnx/llm/
+    onnx/visual/
+    engines/llm/
+    engines/visual/
+    logs/
+  cutedsl-cuda12/
+  cutedsl-venv/
+```
+
+Everything below `data/edgellm/` is ignored except this file. Never commit ONNX,
+externalized weights, TensorRT engines, model weights, or virtual environments.
+
+For compatibility with workstation commands, `$HOME/tensorrt-edgellm-workspace`
+may be a symlink to this directory and local `Cosmos-Reason2-2B` may point to
+`cosmos`. The Cosmos rsync destination remains:
+
+```text
+~/tensorrt-edgellm-workspace/Cosmos-Reason2-2B/onnx/
+```
+
+The TensorRT Edge-LLM v0.10.0 source/build checkout belongs at
+`third_party/tensorrt-edge-llm/`, which is also ignored in full.
+
+A pre-existing CPU BGE-small ONNX candidate was consolidated at
+`data/models/bge-small-en-v1.5-onnx/` (127 MiB graph, tokenizer files). It is
+ignored and was not loaded or installed in this pass. Legacy thin-stack source,
+LanceDB data, and the stopped accidental build logs are retained under the
+ignored `data/archive/` tree for provenance.
+
+Compatibility paths are symlinks only; they do not duplicate payloads:
+
+```text
+~/jetbot-thin-stack/jetbot_vlm_agent  -> data/archive/legacy-thin-stack
+~/jetbot-thin-stack/cosmos-onnx       -> data/edgellm/cosmos/onnx
+~/jetbot-thin-stack/cosmos-engines    -> data/edgellm/cosmos/engines
+~/jetbot-thin-stack/bge-small-en-v1.5-onnx
+                                      -> data/models/bge-small-en-v1.5-onnx
+~/TensorRT-Edge-LLM                   -> third_party/tensorrt-edge-llm
+```
+
+The tracked production code is `jetbot_agent/robot_loop/`; do not edit the
+legacy compatibility tree as a second source checkout. The thin-stack
+`scripts/JETSON_BUILD.sh` is a copy of the tracked
+`scripts/bringup/JETSON_BUILD.sh`, so both entry points run identical flags.
+
+SM87 engines built 2026-08-27 live at `cosmos/engines/llm/llm.engine` (777 MiB)
+and `cosmos/engines/visual/visual.engine` (785 MiB); build and tegrastats logs
+are under `cosmos/logs/`. All of it stays ignored.

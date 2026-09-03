@@ -57,6 +57,7 @@
 #==================================================================================
 
 import time
+import os
 
 # For Jetson Hardware
 from jetbot.utils.utils import get_ip_address
@@ -73,15 +74,17 @@ from PIL import ImageFont
 
 
 
-# Scan for devices on I2C bus
-addresses = qwiic.scan()
+# Scan for devices on I2C bus (qwiic often misses the 40-pin bus on Orin).
+addresses = set(qwiic.scan() or [])
+# PiOLED SSD1306 is 0x3C (60). Always try it on JETBOT_OLED_I2C_BUS.
+addresses.add(60)
 
 # Initialize Display-----------------------------------------------------------
 # Try to connect to the OLED display module via I2C.
 
 # 128x32 display (default)---------------------------------------------
 if 60 in addresses:
-	disp1 = Adafruit_SSD1306.SSD1306_128_32(rst=None, i2c_bus=1, gpio=1) # setting gpio to 1 is hack to avoid platform detection
+	disp1 = Adafruit_SSD1306.SSD1306_128_32(rst=None, i2c_bus=int(os.environ.get('JETBOT_OLED_I2C_BUS', '7')), gpio=1)
 	try:
 		# Initiallize Display
 		disp1.begin()
@@ -156,9 +159,9 @@ while True:
 	except Exception as e:
 		print(e)
 
-	# Checks for WiFi Connection on wlan0
+	# Checks for WiFi Connection on wlan0 / Orin wlP1p1s0
 	try:
-		wlan0 = get_ip_address('wlan0')
+		wlan0 = get_ip_address('wlan0') or get_ip_address('wlP1p1s0')
 		if wlan0 != None:
 			a = a + 2
 	except Exception as e:

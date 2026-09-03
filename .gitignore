@@ -11,15 +11,33 @@ build/
 !.env.example
 *.engine
 *.onnx
+*.onnx.data
+*.plan
 *.gguf
 *.safetensors
+*.pt
+*.pth
+*.ckpt
 *.bin
 .DS_Store
+
+# Local TensorRT Edge-LLM source/build tree. Keep the v0.10.0 clone here, but
+# never commit the full third-party checkout or generated CUDA artifacts.
+/third_party/tensorrt-edge-llm/
+
+# Cosmos ONNX, externalized weights, SM87 engines, and build logs live here.
+# Directory documentation/placeholders may be tracked; all runtime payloads are not.
+/data/edgellm/**
+!/data/edgellm/
+!/data/edgellm/README.md
+/data/archive/**
 
 # Runtime data (keep placeholders)
 /data/*
 !/data/**/
 !/data/**/.gitkeep
+!/data/edgellm/
+!/data/edgellm/README.md
 # Ignore captured images/logs but keep directory placeholders
 /data/images/**
 !/data/images/.gitkeep
@@ -27,14 +45,21 @@ build/
 !/data/logs/.gitkeep
 /data/memory/**
 !/data/memory/.gitkeep
+/data/runtime/**
 /data/maps/**
 !/data/maps/.gitkeep
 /data/benchmarks/**
 !/data/benchmarks/.gitkeep
 /data/audio/**
 !/data/audio/.gitkeep
+/data/frames/**
+!/data/frames/**/
+!/data/frames/**/.gitkeep
 /data/bringup/**
 !/data/bringup/.gitkeep
+/data/lab/**
+!/data/lab/
+!/data/lab/.gitkeep
 # Fetched model checkpoints and downloaded wheels (archives, espeak-ng G2P data,
 # tokens); re-run the scripts/bringup/fetch_*.sh gates to regenerate. The *.onnx
 # rule above only covers the graphs, not the archives shipped alongside them.
@@ -45,6 +70,8 @@ build/
 !/data/models/.gitkeep
 !/data/models/f3/.gitkeep
 !/data/models/f5/.gitkeep
+!/data/models/zipformer/.gitkeep
+!/data/models/piper/.gitkeep
 
 # ROS build artifacts
 ros2_ws/build/
@@ -62,3 +89,5 @@ CMakeFiles/
 cmake_install.cmake
 **/CMakeFiles/
 **/cmake_install.cmake
+scripts/bringup/cosmos_resident
+scripts/bringup/cosmos_resident.o

@@ -40,17 +40,30 @@ audio:
     far_end_reference_required: true
     rnnoise_enabled: false
   asr:
-    backend: nvidia_fastconformer
-    model: null
-    runtime: null
+    backend: sherpa_onnx_zipformer
+    model: data/models/zipformer/sherpa-onnx-zipformer-small-en-2023-06-26
+    precision: int8
+    runtime: sherpa-onnx
+    provider: cpu
+    num_threads: 2
   tts:
-    acoustic_model: nvidia_fastpitch
-    vocoder: nvidia_hifigan
-    runtime: null
+    backend: sherpa_onnx_piper_vits
+    model: data/models/piper/vits-piper-en_US-lessac-low-int8
+    precision: int8
+    runtime: sherpa-onnx
+    provider: cpu
+    num_threads: 2
 
 memory:
-  chroma_path: data/memory/chroma
-  facts_db: data/memory/facts.db
+  backend: lancedb
+  uri: data/memory/lancedb
+  table: memory
+  embedder: data/models/bge-small-en-v1.5-onnx/bge-small-int8.onnx
+  provider: cpu
+  dimensions: 384
+  vector_dtype: float16
+  top_k: 4
+  max_rag_chars: 1400
 
 thresholds:
   cmd_vel_timeout_sec: 0.5

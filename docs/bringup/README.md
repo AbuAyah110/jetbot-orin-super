@@ -13,10 +13,10 @@ Issue tracker: [`TASKBOARD.md`](../../TASKBOARD.md) · spec: [`JETBOT_SPEC.md`](
 | C CSI camera | [03-csi-camera.md](03-csi-camera.md) | `./scripts/bringup/test_csi_camera.sh` |
 | D Audio | [04-audio.md](04-audio.md) | `./scripts/bringup/test_alsa.sh` |
 | E Python skeleton | [05-python-skeleton.md](05-python-skeleton.md) | `./scripts/bringup/test_python_skeleton.sh` |
-| F Voice | [06-voice.md](06-voice.md) · F3 evidence: [06b-f3-rnnoise.md](06b-f3-rnnoise.md) | safe ALSA → WebRTC APM → FastConformer + Matcha/HiFi-GAN → guarded duplex |
-| G Model runtimes | [07-tensorrt.md](07-tensorrt.md) · G1 evidence: [07-tensorrt-g1.md](07-tensorrt-g1.md) | dummy I/O per runtime (isolated) |
-| H Agent (I1–I8) | [08-agent.md](08-agent.md) · design notes: [09-agent-i1-i2.md](09-agent-i1-i2.md), [09b-agent-i5-navigation.md](09b-agent-i5-navigation.md), [09c-agent-i3-i4.md](09c-agent-i3-i4.md) | each I* ticket’s gate; LLM never PWM |
-| I Memory | [09-memory.md](09-memory.md) | Chroma upsert/query + SQLite put/get |
+| F Voice | [06-voice.md](06-voice.md) · F3 evidence: [06b-f3-rnnoise.md](06b-f3-rnnoise.md) | safe ALSA → WebRTC APM → Zipformer + Piper VITS → guarded duplex |
+| G Model runtimes | [07-tensorrt.md](07-tensorrt.md) · G1 evidence: [07-tensorrt-g1.md](07-tensorrt-g1.md) · Cosmos Nano: [07-cosmos-nano.md](07-cosmos-nano.md) · Resume: [11-resume-after-power.md](11-resume-after-power.md) | Cosmos waits on workstation INT4 ONNX; no model loaded |
+| H Agent (I1–I8) | [08-agent.md](08-agent.md) · [natural conversation](12-natural-conversation.md) · [five demos](13-five-demos.md) · design notes: [09-agent-i1-i2.md](09-agent-i1-i2.md), [09b-agent-i5-navigation.md](09b-agent-i5-navigation.md), [09c-agent-i3-i4.md](09c-agent-i3-i4.md) | each I* ticket’s gate; LLM never PWM |
+| I Memory | [09-memory.md](09-memory.md) | CPU INT8 BGE → LanceDB teach/restart/recall |
 
 Memory **tools** (Chroma/SQLite wrappers for the harness) are a later subtask after Stage I, not part of I1–I8.
 
@@ -33,11 +33,11 @@ Lightweight re-check only — no OS reinstall, no motor PWM.
 | C | **Pass** | `nvarguscamerasrc` 1-frame EOS; prior live preview: `notebooks/camera/csi_camera_test.ipynb`. |
 | D | **Audio HW verified** | Waveshare SSS1629. Identify by ALSA **name**, never card index. Sidetone **off**. Sequential capture then playback until F2 AEC. |
 | E | **Pass** | `.venv` via `virtualenv` (no `python3-venv` apt). PyYAML 6.0.3. `test_python_skeleton.sh` ok. |
-| F | **F1, F2, F3, F4, F5 pass — only F6 open** | F1 name-resolved ALSA mixer. F2 `pywebrtc-audio` offline NS 8.2× / AEC 236×. **F3 verdict: reject RNNoise** — it denoises better and hears worse, raising ASR WER 0.006 → 0.253, so WebRTC APM stays the only front end. F4 FastConformer CTC int8 ONNX via `sherpa-onnx`, RTF 0.045 @ 2 threads, WER 0.00, 324 MiB peak. **F5 pass with a substitution:** Matcha-TTS mel + genuine HiFi-GAN v2 vocoder instead of FastPitch (no FastPitch ONNX exists on NGC), first audio 349 ms, RTF 0.214, 163 MiB peak; **one low-volume `aplay` still owed** because `/dev/snd` is not exposed to the sandbox. |
+| F | **Compact F4/F5 replacement passes — only F6 open** | F1 name-resolved ALSA mixer. F2 `pywebrtc-audio` offline NS 8.2× / AEC 236×. **F3 verdict: reject RNNoise**. Current default: Zipformer small int8 ASR + Piper Lessac-low int8 VITS in one `sherpa-onnx` CPU process, WER 0.00, 162.3 MiB short-turn peak, zero VRAM. A 5 s live mic capture transcribed at RTF 0.044 and peaked at 192.2 MiB (201.5 decimal MB); playback was not attempted. Historical FastConformer/Matcha evidence remains in the notes. |
 | G | **G1 pass; stage rescoped** | TensorRT 10.3.0.30 / CUDA 12.6.11 / cuDNN 9.3.0 healthy, three engines built and numerically verified. TensorRT-LLM absent with no Tegra wheel; **PyTorch absent and now a prerequisite ticket ahead of G3/G4**; VLM path decided as **llama.cpp + GGUF**. |
 | H | **I1–I5 pass; I6–I8 open** | Harness state machine, structural tool-safety boundary, vision, search, and navigation tools all land as pure software with the mock backend. I6 needs F6 for duplex; I7 needs Stage G. |
 | I | After H | Memory stores after the agent loop skeleton exists. |
 
-Voice stack: **FastConformer** ASR + **Matcha-TTS / HiFi-GAN v2** TTS + **WebRTC APM** front end (required; **RNNoise rejected**). TensorRT is not the ASR/TTS runtime, and there is no NVIDIA product called "TensorRT Edge-LLM" — see [07-tensorrt.md](07-tensorrt.md).
+Voice stack: **Zipformer** ASR + **Piper VITS** TTS + **WebRTC APM** front end (required; **RNNoise rejected**) through CPU-only `sherpa-onnx`. TensorRT is not the ASR/TTS runtime, and there is no NVIDIA product called "TensorRT Edge-LLM" — see [07-tensorrt.md](07-tensorrt.md).
 
 **Ahead of F6:** TTS emits 22050 Hz while capture, the APM, and ASR are all 16 kHz, so the AEC reference tap **must resample 22050 → 16000** or echo cancellation fails silently. Keep the 200 ms inter-sentence gap F5 found, in both the playback stream and the reference tap.

@@ -1,0 +1,19 @@
+[Unit]
+Description=JetBot PiOLED status (I2C bus 7)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=impulse110
+WorkingDirectory=/home/impulse110
+Environment=HOME=/home/impulse110
+Environment=JETBOT_OLED_I2C_BUS=7
+# Run the script by path so `python3 -m jetbot.apps.oled_status` does not
+# execute jetbot/__init__.py (camera/motor/robot imports).
+ExecStart=/usr/bin/python3 /home/impulse110/Documents/jetbot-orin-super/jetbot/apps/oled_status.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

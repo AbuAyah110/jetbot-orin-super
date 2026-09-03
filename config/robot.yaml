@@ -21,8 +21,27 @@ control:
   loop_hz: 20
   backend: mock                 # mock | jetbot_i2c
   # jetbot_i2c only after docs/safety.md checklist
-  i2c_bus: 1
+  i2c_bus: 7
   i2c_address: 112
+  right_motor_alpha: -1.0
+
+# MEASURED on the chassis 2026-08-27 with bounded duty ramps on the floor, not a
+# value guessed by the VLM. Cosmos asked for vx=0.03 and reversed a backward
+# request, so the deterministic intent path reads these numbers instead.
+# Ramp log (each pulse ~1.5 s, then Robot.stop()):
+#   0.15        -> motors only hummed; stiction/pack sag held the wheels still
+#   0.30 - 0.50 -> wheels turned but the chassis did not travel far enough
+#   0.65        -> confirmed travel ("that worked"); locked in as the live duty
+# The threshold is stiction plus motor-pack voltage, so it moves with battery
+# charge: re-run scripts/bringup/wheel_polarity.py after a charge or a swap.
+# Polarity confirmed matched at right_motor_alpha = -1.0 (do not invert).
+# speed/duration below are clamped by the hard caps in
+# jetbot_agent/robot_loop/drive_calibration.py so a config typo cannot run away.
+drive_calibration:
+  speed: 0.65                   # one duty for EVERY motion intent (fwd/back/left/right)
+  duration_s: 1.2               # hold, then Robot.stop() — same length for turns too
+  measured_on: '2026-08-27'
+  # Hard caps enforced in code: speed <= 0.7, duration <= 2.0 s.
 
 topics:
   cmd_vel: /cmd_vel
