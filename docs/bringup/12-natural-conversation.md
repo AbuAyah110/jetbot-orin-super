@@ -164,3 +164,22 @@ uncertain, and the detour tracks only its own named target: it cannot see any
 other obstacle. A ToF sensor and bumper remain required for dependable
 pre-impact and contact protection, and are now the blocking item for any
 general “move around the room” behaviour.
+
+## Guided voice scorecard
+
+Run the interactive checklist while the voice service is listening:
+
+```bash
+.venv/bin/python scripts/bringup/guided_voice_test.py
+```
+
+It presents one setup and phrase at a time, explains pass/fail criteria, and
+records `PASS`, `FAIL`, `SKIP`, plus an optional note. Reports are saved under
+`data/test_reports/voice-TIMESTAMP.md`. The checklist never drives JetBot
+itself; motion occurs only when the operator speaks a motion test phrase.
+
+Print the phrases without starting the checklist:
+
+```bash
+.venv/bin/python scripts/bringup/guided_voice_test.py --list
+```
