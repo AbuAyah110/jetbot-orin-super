@@ -3,7 +3,11 @@ from __future__ import annotations
 from jetbot_agent.hardware.vl53l0x import (
     CLEAR_MM,
     OUT_OF_RANGE_MM,
+    READING_FAULT,
+    READING_NO_TARGET,
+    READING_VALID,
     STOP_MM,
+    classify_reading,
     decode_range_mm,
     interpret_range_mm,
 )
@@ -39,6 +43,37 @@ def test_interpret_range_none_is_not_clear():
     detail = interpret_range_mm(None)
     assert detail['clear'] is False
     assert detail['ok'] is False
+
+
+def test_empty_field_is_evidence_of_clearance_not_a_failed_read():
+    # Status 4 with the wrap value is the ordinary answer over open floor.
+    # Treating it as unreadable made creep refuse exactly where it should go.
+    kind, millimetres = classify_reading(status=4, raw_mm=8191)
+    assert kind == READING_NO_TARGET
+    assert millimetres == OUT_OF_RANGE_MM
+
+    allowed, detail = occupancy_allows_creep(b'', range_mm=millimetres, kind=kind)
+    assert allowed is True
+    assert detail['clear'] is True
+    assert detail['reason'] == 'no_target_in_range'
+
+
+def test_a_broken_sensor_still_refuses_the_pulse():
+    kind, millimetres = classify_reading(status=5, raw_mm=120)
+    assert kind == READING_FAULT
+
+    allowed, detail = occupancy_allows_creep(b'', range_mm=millimetres, kind=kind)
+    assert allowed is False
+    assert detail['rejected'] == 'sensor_fault'
+
+
+def test_a_measured_obstacle_outranks_an_empty_field():
+    kind, millimetres = classify_reading(status=11, raw_mm=150)
+    assert kind == READING_VALID
+
+    allowed, detail = occupancy_allows_creep(b'', range_mm=millimetres, kind=kind)
+    assert allowed is False
+    assert detail['blocked'] is True
 
 
 def test_gy530_status_11_keeps_a_real_range():

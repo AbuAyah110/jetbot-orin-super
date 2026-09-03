@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import time
@@ -23,7 +24,13 @@ from jetbot_agent.hardware.vl53l0x import (  # noqa: E402
 
 
 def main() -> int:
-    samples = 5
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--samples', type=int, default=5, help='readings to take')
+    parser.add_argument(
+        '--interval', type=float, default=0.15, help='seconds between readings'
+    )
+    args = parser.parse_args()
+    samples = max(1, args.samples)
     with VL53L0X() as tof:
         print(
             json.dumps(
@@ -40,7 +47,7 @@ def main() -> int:
         )
         for index in range(samples):
             millimetres = tof.range_mm()
-            policy = interpret_range_mm(millimetres)
+            policy = interpret_range_mm(millimetres, kind=tof.last_kind)
             print(
                 json.dumps(
                     {
@@ -48,12 +55,13 @@ def main() -> int:
                         'range_mm': millimetres,
                         'status': tof.last_status,
                         'raw_mm': tof.last_raw_mm,
+                        'kind': tof.last_kind,
                         **policy,
                     }
                 ),
                 flush=True,
             )
-            time.sleep(0.15)
+            time.sleep(max(0.0, args.interval))
     return 0
 
 

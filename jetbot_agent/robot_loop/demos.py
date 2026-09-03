@@ -129,15 +129,17 @@ def occupancy_score(jpeg: bytes) -> dict:
 def occupancy_allows_creep(
     jpeg: bytes,
     range_mm: Optional[int] = None,
+    kind: str = '',
 ) -> tuple[bool, dict]:
     """True only when a short pulse is allowed.
 
     A VL53L0X millimetre reading, when provided, is the safety authority.
-    The JPEG occupancy heuristic is only a fallback when no range is present.
-    Uncertain scores fail closed.
+    ``kind`` distinguishes an empty field from a broken sensor, which the
+    millimetre value alone cannot express. The JPEG occupancy heuristic is only
+    a fallback when no range is present. Uncertain scores fail closed.
     """
     if range_mm is not None:
-        detail = interpret_range_mm(range_mm)
+        detail = interpret_range_mm(range_mm, kind=kind)
         detail['source'] = 'tof'
         return bool(detail.get('clear')), detail
     detail = occupancy_score(jpeg)

@@ -26,6 +26,16 @@ OUT_OF_RANGE_MM = 8190
 # 5 is analog/VCSEL hardware fail.
 _DEVICE_STATUS_HARDWARE_FAIL = 5
 _DEVICE_STATUS_OK = frozenset({0, 9, 11})
+# "The ranging sequence ran and found nothing within range" is a real
+# observation, not a failed read. Measured on this GY-530: a hand at 115-366 mm
+# reports 11, and removing it reports 4 with the wrap value. Keeping 4 lumped in
+# with hardware faults made an empty floor indistinguishable from a dead laser,
+# so creep refused in the one situation it exists for.
+_DEVICE_STATUS_NO_TARGET = frozenset({3, 4})
+
+READING_VALID = 'valid'
+READING_NO_TARGET = 'no_target'
+READING_FAULT = 'fault'
 # Creep / near-field stop. Indoor JetBot should not lunge into something closer.
 STOP_MM = 250
 CLEAR_MM = 400
@@ -81,8 +91,38 @@ def _timeout_microseconds_to_mclks(timeout_period_us: int, vcsel_period_pclks: i
     return ((timeout_period_us * 1000) + (macro_period_ns // 2)) // macro_period_ns
 
 
-def interpret_range_mm(range_mm: Optional[int]) -> dict:
-    """Fail-closed near-field policy for one creep pulse."""
+def classify_reading(*, status: int, raw_mm: int) -> tuple[str, int]:
+    """Separate a measured distance, an empty field, and a broken sensor.
+
+    Collapsing the last two into one sentinel is what made an open floor
+    unreadable: both arrived as "out of range", and the only safe response to a
+    possibly dead sensor is to refuse.
+    """
+    code = int(status)
+    millimetres = int(raw_mm)
+    if code == _DEVICE_STATUS_HARDWARE_FAIL:
+        return READING_FAULT, OUT_OF_RANGE_MM
+    if code in _DEVICE_STATUS_NO_TARGET:
+        return READING_NO_TARGET, OUT_OF_RANGE_MM
+    if code in _DEVICE_STATUS_OK:
+        if 0 < millimetres < OUT_OF_RANGE_MM:
+            return READING_VALID, millimetres
+        # A status the device calls good, carrying the wrap value, still means
+        # the beam found nothing.
+        return READING_NO_TARGET, OUT_OF_RANGE_MM
+    return READING_FAULT, OUT_OF_RANGE_MM
+
+
+def interpret_range_mm(
+    range_mm: Optional[int],
+    *,
+    kind: str = '',
+) -> dict:
+    """Fail-closed near-field policy for one creep pulse.
+
+    ``kind`` carries the reading class from :func:`classify_reading`. A
+    confirmed empty field permits the pulse; anything unexplained does not.
+    """
     detail = {
         'ok': False,
         'range_mm': range_mm,
@@ -90,6 +130,19 @@ def interpret_range_mm(range_mm: Optional[int]) -> dict:
         'clear': False,
         'rejected': '',
     }
+    if kind == READING_NO_TARGET:
+        # Nothing within the sensor's reach. This is the ordinary open-floor
+        # answer, and it is the evidence a creep pulse needs. It is not proof
+        # for a matte black or steeply angled surface, which can also return
+        # nothing; the one-pulse limit remains the guard for that.
+        detail['ok'] = True
+        detail['clear'] = True
+        detail['range_mm'] = OUT_OF_RANGE_MM
+        detail['reason'] = 'no_target_in_range'
+        return detail
+    if kind == READING_FAULT:
+        detail['rejected'] = 'sensor_fault'
+        return detail
     if range_mm is None:
         detail['rejected'] = 'no_reading'
         return detail
@@ -147,6 +200,7 @@ class VL53L0X:
         self._data_ready = False
         self.last_status = -1
         self.last_raw_mm = 0
+        self.last_kind = ''
         model = self._read_u8(_IDENTIFICATION_MODEL_ID)
         revision = self._read_u8(_IDENTIFICATION_REVISION_ID)
         if model != MODEL_ID:
@@ -470,4 +524,6 @@ class VL53L0X:
         self._write_u8(_SYSTEM_INTERRUPT_CLEAR, 0x01)
         self.last_status = status
         self.last_raw_mm = range_mm
-        return decode_range_mm(status=status, raw_mm=range_mm)
+        kind, millimetres = classify_reading(status=status, raw_mm=range_mm)
+        self.last_kind = kind
+        return millimetres
