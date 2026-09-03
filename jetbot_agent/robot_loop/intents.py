@@ -263,6 +263,23 @@ _DEICTIC_TARGET = re.compile(
     r'^(?:that|this|it|the\s+(?:object|thing|item|one))(?:\s+please)?$'
 )
 
+# "What do you see in front of you" asks for a description, but the where-route
+# captured "in front of you" as the thing to locate and answered "I see the in
+# front of you on my left". A bare viewpoint or direction names no object, so it
+# belongs to the describe route instead. ``fronting`` is a recurring Zipformer
+# corruption of "front of".
+_WHERE_NON_OBJECT = re.compile(
+    r'^(?:'
+    r'(?:right\s+)?(?:in\s+)?front(?:ing)?(?:\s+of)?(?:\s+(?:you|me|us|it))?'
+    r'|(?:straight\s+)?ahead(?:\s+of\s+(?:you|me|us))?'
+    r'|(?:over\s+|out\s+)?(?:there|here)'
+    r'|(?:all\s+)?around(?:\s+(?:you|me|us|here))?'
+    r'|(?:on|to)\s+(?:your|my|the)\s+(?:left|right)'
+    r'|in\s+(?:your|the|this)\s+(?:view|image|picture|frame|camera)'
+    r'|anything|something|everything|things|stuff'
+    r')(?:\s+(?:right\s+)?now)?$'
+)
+
 
 def normalize_transcript(text: str) -> str:
     """Lowercase and strip punctuation. ASR returns UPPERCASE with repeats."""
@@ -360,6 +377,8 @@ def where_target(text: str) -> str:
         target = trailer.sub('', target)
     target = re.sub(r'^(?:a|an|the)\s+', '', target).strip()
     if target in {'this', 'that', 'it', 'anything', 'something', 'everything'}:
+        return ''
+    if _WHERE_NON_OBJECT.match(target):
         return ''
     return target[:48]
 

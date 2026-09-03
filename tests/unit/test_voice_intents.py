@@ -28,8 +28,10 @@ from jetbot_agent.robot_loop.intents import (  # noqa: E402
     is_visual_question,
     match_intent,
     memory_fact,
+    is_where_request,
     search_target,
     search_wants_approach,
+    where_target,
 )
 
 from talk_and_drive import (  # noqa: E402
@@ -265,6 +267,39 @@ def test_compound_search_names_object_and_requests_approach(transcript):
 def test_look_only_search_does_not_request_approach(transcript):
     assert is_search_request(transcript) is True
     assert search_wants_approach(transcript) is False
+
+
+@pytest.mark.parametrize(
+    'transcript',
+    [
+        'WHAT DO YOU SEE IN FRONT OF YOU',
+        # Zipformer heard this live and the reply became a nonsense sentence.
+        'WHAT DO YOU SEE IN FRONTING YOU',
+        'WHAT DO YOU SEE AHEAD',
+        'WHAT DO YOU SEE OVER THERE',
+        'DO YOU SEE ANYTHING',
+        'WHAT DO YOU SEE ON YOUR LEFT',
+    ],
+)
+def test_a_viewpoint_is_described_not_located(transcript):
+    # "In front of you" names no object, so the where-route must not answer
+    # "I see the in front of you on my left".
+    assert where_target(transcript) == ''
+    assert is_where_request(transcript) is False
+    assert is_describe_request(transcript) is True
+
+
+@pytest.mark.parametrize(
+    'transcript,target',
+    [
+        ('WHERE IS MY BALL', 'my ball'),
+        ('DO YOU SEE THE BLUE OBJECT', 'blue object'),
+        ('WHERE IS THE RED BOX', 'red box'),
+    ],
+)
+def test_a_named_object_still_reaches_the_where_route(transcript, target):
+    assert where_target(transcript) == target
+    assert is_where_request(transcript) is True
 
 
 def test_approach_is_not_mistaken_for_room_search():

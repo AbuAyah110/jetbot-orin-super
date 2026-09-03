@@ -114,6 +114,38 @@ def service_state() -> str:
         return "unknown"
 
 
+def usb_audio_present() -> bool:
+    try:
+        cards = Path("/proc/asound/cards").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "USB" in cards
+
+
+def report_blockers(state: str) -> list[str]:
+    """Name what will stop the robot answering, before any test is scored.
+
+    A dead voice service and an unplugged USB adapter both look identical from
+    the operator's chair: the robot simply never replies. Saying so up front
+    avoids scoring a rig failure as a behaviour failure.
+    """
+    blockers = []
+    if state != "active":
+        blockers.append(
+            'The voice service is "{0}", so nothing is listening.\n'
+            "    Recover with:\n"
+            "      systemctl --user reset-failed jetbot-talk-and-drive.service\n"
+            "      systemctl --user restart jetbot-talk-and-drive.service".format(state)
+        )
+    if not usb_audio_present():
+        blockers.append(
+            "No USB audio card is present, so there is no microphone or speaker.\n"
+            "    Re-seat the USB audio adapter, confirm it with `lsusb`, then\n"
+            "    restart the service before scoring."
+        )
+    return blockers
+
+
 def ask_result() -> tuple[str, str]:
     while True:
         answer = input("Result [p=pass, f=fail, s=skip, q=save and quit]: ").strip().lower()
@@ -171,10 +203,23 @@ def main() -> int:
     stamp = dt.datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     # Anchored to the repo so a run from any directory lands in one place.
     output = args.output or REPO_ROOT / "data/test_reports" / f"voice-{stamp}.md"
+    state = service_state()
     print("JetBot guided voice test")
-    print(f"Service: {service_state()}")
-    print("This checklist never drives JetBot; only your spoken commands can.")
+    print(f"Service: {state}")
+    print("This checklist only prompts you; JetBot answers your spoken words.")
     print("For motion tests: use open floor, stay beside it, and keep a hand on power.")
+
+    blockers = report_blockers(state)
+    if blockers:
+        print("\n" + "!" * 72)
+        print("JetBot cannot answer right now:")
+        for blocker in blockers:
+            print("  - " + blocker)
+        print("!" * 72)
+        if input("\nScore anyway? [y/N]: ").strip().lower() != "y":
+            print("Stopped without scoring. Fix the above, then run this again.")
+            return 2
+
     input("\nPress Enter when ready...")
 
     rows: list[tuple[TestCase, str, str]] = []
