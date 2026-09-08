@@ -60,7 +60,8 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | Collision ToF | **Live** — VL53L0X bus 1 @ `0x29` tracks distance (≈165 mm blocked, ≈550 mm clear); this board reports ST status 11, which the driver now accepts | `.venv/bin/python scripts/bringup/probe_tof.py` |
 | Wake phrase | **Not started** — auto-listen still treats every utterance as a command, so background chat gets “I was unable to understand what you said.” Try a “hello jetbot” session gate before the next live voice pass | see Try next below |
 | Zipformer command words | **Patched, not fixed** — live ASR hears “find” as “fine” and “blue” as “blew”; bounded text repairs restore search, but a larger CPU ASR may be needed if new phrases keep missing the router | see To fix below |
-| Gamepad + episode logs | **Not started, do not implement yet** — human teleop through the existing clamps, then JSONL episodes for later offline RL. Scenario catalog and per-tick fields are locked below | see Later below |
+| Gamepad + episode logs | **Not started, do not implement yet** — first P0 slice of the navigation brain (continuous `v, ω` teleop + recorder). Scenario catalog stays below | see Later gamepad / [14-navigation-brain.md](docs/bringup/14-navigation-brain.md) |
+| Navigation brain | **Planned, not started** — Cosmos as task executive; CNN+GRU student outputs `[v, ω]`; PID/encoders later. Live robot stays pulse-based until P0 is explicitly started | [14-navigation-brain.md](docs/bringup/14-navigation-brain.md) |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
 | Memory | **Live** — 32.5 MiB CPU INT8 BGE, LanceDB float16 vectors, explicit teach + restart recall passed | [09-memory.md](docs/bringup/09-memory.md) |
 
@@ -129,10 +130,12 @@ object and move towards it” transcribes as find/blue/move without repairs;
 
 ## Later — gamepad teleop and episode logs
 
-Not started. Do not implement until wake phrase is tried. Estimate remains
-about 1–2 days of logging/teleop, **not** on-device training. PyTorch stays
-out of the robot loop; any offline RL job is a later workstation pass over
-ignored `data/` episodes.
+Not started. Do not implement until wake phrase is tried. This is the first
+P0 slice of the [navigation brain](docs/bringup/14-navigation-brain.md):
+stick → `[v, ω]`, same mux, same recorder. Logging on today’s
+duration-then-stop pulses is only a stopgap; the native action is continuous
+velocity once P0 `set_velocity` exists. PyTorch stays off the robot; offline
+RL is a workstation pass over ignored `data/` episodes.
 
 Wanted control: a USB gamepad whose `v` / `ω` go through the same velocity
 and duration-then-stop clamps as voice. Release-to-stop / deadman beats a
@@ -187,6 +190,84 @@ offline RL can time-align ticks. If ROS is ever added, it **subscribes** to
 commands the existing Python executor already accepts. It must not open I2C
 or PWM. JSONL + JPEG paths remain the default log; a bag is optional once
 episodes exist.
+
+## Later — navigation brain
+
+Planned, **not started**. Full write-up:
+[docs/bringup/14-navigation-brain.md](docs/bringup/14-navigation-brain.md).
+
+Do not implement until the operator opens P0. Live motion stays
+duration-then-stop. Voice wake-phrase remains the next live try.
+
+Invariants: Cosmos outside the servo loop; policy outputs `[v, ω]` not PWM;
+one Argus tee (448² Cosmos + ~160×120 nav); stale ToF is not clear; student
+is CPU ONNX beside Cosmos, not PyTorch on the Orin; teacher/critic stay on
+the workstation; encoders go under PID without changing the policy interface
+at first; RAG stores skills and summaries, not 10 Hz rows.
+
+### P0 — before serious training
+
+- [ ] Continuous `set_velocity(v, omega)`
+- [ ] Differential-drive mapping
+- [ ] Left/right PWM feed-forward calibration
+- [ ] Acceleration / angular-rate limiting
+- [ ] Continuous ToF safety controller
+- [ ] Navigation camera branch (same Argus)
+- [ ] Timestamped sensor hub
+- [ ] Navigation episode recorder
+- [ ] Continuous `v, ω` teleoperation
+- [ ] AI / human / safety mux
+- [ ] Canonical obs/action schema
+- [ ] Isaac and real robot share that schema
+
+### P1 — training platform
+
+- [ ] Visual target observation
+- [ ] Isaac JetBot outputs `[v, ω]`
+- [ ] Privileged simulated range rays
+- [ ] Empty-room PPO goal policy
+- [ ] Privileged PPO obstacle teacher
+- [ ] Obstacle curriculum
+- [ ] Teleoperation dataset
+- [ ] Robomimic export
+- [ ] BC-RNN student
+- [ ] Teacher demonstration dataset
+- [ ] Distill teacher → RGB+ToF student
+- [ ] Export student ONNX/TensorRT
+- [ ] Deploy student beside Cosmos
+
+### P1 — hardware / control
+
+- [ ] Wheel encoders
+- [ ] Left/right wheel velocity
+- [ ] Independent wheel-speed PID
+- [ ] Preserve `[v, ω]` interface
+- [ ] Evaluate two-front-ToF
+- [ ] Optional IMU
+
+### P2 — robustness
+
+- [ ] Human takeover logging
+- [ ] DAgger corrections
+- [ ] Retrain student
+- [ ] PPO fine-tune student
+- [ ] Privileged critic if useful
+- [ ] Domain randomization
+- [ ] Measure sim-to-real success rate
+
+### P3 — continual improvement and cognition
+
+- [ ] Real-world navigation dataset
+- [ ] Episode scoring / reward reconstruction
+- [ ] IQL / TD3+BC / CQL experiments
+- [ ] Compare offline policy to student
+- [ ] SAC only after PPO baseline is strong
+- [ ] Skill library schema
+- [ ] Cosmos tasks → registered skills
+- [ ] Skills and compact summaries in RAG
+- [ ] Keyframe embeddings for semantic visual memory
+- [ ] Raw trajectories stay out of RAG
+- [ ] Place/object memory once localization exists
 
 ## Ordered execution
 
