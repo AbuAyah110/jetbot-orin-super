@@ -145,6 +145,10 @@ at 10–20 FPS. Navigation frames **must not** wait for the 0.6 s post-motion
 settle used by Cosmos/colour gates. The student learns from frames captured
 **during** motion.
 
+Physical aim, height, and exposure lock are a separate board item (**To fix —
+camera aim and exposure**). Calibrate the mount before treating nav RGB as
+trustworthy. Do not add a second CSI camera to work around a bad tilt.
+
 ---
 
 ## 8. P0 — Timestamped sensor hub

@@ -60,6 +60,7 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | Collision ToF | **Live** — VL53L0X bus 1 @ `0x29` tracks distance (≈165 mm blocked, ≈550 mm clear); this board reports ST status 11, which the driver now accepts | `.venv/bin/python scripts/bringup/probe_tof.py` |
 | Wake phrase | **Not started** — auto-listen still treats every utterance as a command, so background chat gets “I was unable to understand what you said.” Try a “hello jetbot” session gate before the next live voice pass | see Try next below |
 | Zipformer command words | **Patched, not fixed** — live ASR hears “find” as “fine” and “blue” as “blew”; bounded text repairs restore search, but a larger CPU ASR may be needed if new phrases keep missing the router | see To fix below |
+| Camera aim and exposure | **Not started** — IMX219 still uses auto-exposure with a 2.5 s warmup and 0.6 s post-move settle; physical aim vs ToF beam is unmeasured. Calibrate before trusting colour search or nav RGB | see To fix below |
 | Gamepad + episode logs | **Not started, do not implement yet** — first P0 slice of the navigation brain (continuous `v, ω` teleop + recorder). Scenario catalog stays below | see Later gamepad / [14-navigation-brain.md](docs/bringup/14-navigation-brain.md) |
 | Navigation brain | **Planned, not started** — Cosmos as task executive; CNN+GRU student outputs `[v, ω]`; PID/encoders later. Live robot stays pulse-based until P0 is explicitly started | [14-navigation-brain.md](docs/bringup/14-navigation-brain.md) |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
@@ -127,6 +128,33 @@ If live logs after the wake-phrase pass still drop command verbs, try a
 beside Cosmos (~2.88 GiB delta, ~1.7 GiB free with RAG); “find the blue
 object and move towards it” transcribes as find/blue/move without repairs;
 `I am fine` is unchanged. Do not resurrect FastConformer/NeMo for this.
+
+## To fix — camera aim and exposure
+
+Not started. Do not replace the live 448² Cosmos path. One `nvarguscamerasrc`.
+
+Physical: set camera height, pitch, and yaw so the floor in the near field and
+a table-height target both appear in the 448² frame, and so the VL53L0X beam
+lands in that same patch of floor (not above the horizon or under the bumper).
+Record the angles and a tape-measure height.
+
+Photometric: Argus auto-exposure currently starts dark (mean luma ~40) and
+only steadies after ~2.5 s; a 0.6 s settle after a pulse is required because
+motion blur plus AE made empty floor look blocked. Indoor AE also washes
+blue toward grey and lets the pink wall register as red. Measure whether a
+locked exposure / white-balance (or a narrower AE range) keeps a blue puck
+blue at 0.5–2 m without blowing the window, then keep or shorten warmup.
+
+Colour: after aim and exposure, re-check `locate_color` on a centred blue
+object vs edge wall tint. Do not loosen pixel gates to hide a tilted camera.
+
+Keep mode A: `talk_and_drive.py` still captures 448² JPEG for Cosmos. A later
+nav tee (~160×120) uses the **same** calibrated mount; do not add a second CSI
+pipeline to “fix” framing.
+
+Gate: three saved frames (object left / centre / right) show a saturated
+target, not a grey blob; ToF spot is visible or marked in those frames;
+“what do you see” still answers from a fresh 448² JPEG after the change.
 
 ## Later — gamepad teleop and episode logs
 
