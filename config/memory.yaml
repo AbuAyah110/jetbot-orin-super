@@ -1,8 +1,18 @@
-# Placeholder — memory stack starts at Milestone 4
-enabled: false
-sqlite_path: data/memory/memories.db
-hnsw_path: data/memory/index.hnsw
-embedding_dimensions: 256
+# Live Stage I conversational RAG. Motor routes never read this store.
+enabled: true
+backend: lancedb
+uri: data/memory/lancedb
+table: memory
+embedder:
+  model: data/models/bge-small-en-v1.5-onnx/bge-small-int8.onnx
+  tokenizer: data/models/bge-small-en-v1.5-onnx/tokenizer.json
+  provider: CPUExecutionProvider
+  threads: 2
+  precision: int8
+embedding_dimensions: 384
+vector_dtype: float16
 retrieval:
-  top_k: 8
-  final_context_memories: 5
+  top_k: 4
+  max_top_k: 5
+  max_distance: 0.85
+  max_context_chars: 1400

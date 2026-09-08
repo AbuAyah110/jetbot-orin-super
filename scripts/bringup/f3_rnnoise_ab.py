@@ -783,7 +783,10 @@ def run() -> int:
     if not asr_specs:
         asr_skip = f"no LibriSpeech fixtures with reference text under {LIBRI}"
     elif not (ASR_MODEL / "model.int8.onnx").exists():
-        asr_skip = f"missing {ASR_MODEL}; run scripts/bringup/fetch_fastconformer_models.sh"
+        asr_skip = (
+            f"historical FastConformer model removed at {ASR_MODEL}; "
+            "the committed F3 comparison remains the evidence"
+        )
     else:
         for label, _kw, _rn in CONFIGS:
             paths = [str(processed_paths[(name, label)]) for name in asr_specs]

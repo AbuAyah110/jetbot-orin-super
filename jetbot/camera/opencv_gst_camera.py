@@ -14,8 +14,9 @@ class OpenCvGstCamera(CameraBase):
     width = traitlets.Integer(default_value=224).tag(config=True)
     height = traitlets.Integer(default_value=224).tag(config=True)
     fps = traitlets.Integer(default_value=30).tag(config=True)
-    capture_width = traitlets.Integer(default_value=816).tag(config=True)
-    capture_height = traitlets.Integer(default_value=616).tag(config=True)
+    capture_width = traitlets.Integer(default_value=1280).tag(config=True)
+    capture_height = traitlets.Integer(default_value=720).tag(config=True)
+    sensor_id = traitlets.Integer(default_value=0).tag(config=True)
 
     def __init__(self, *args, **kwargs):
         self.value = np.empty((self.height, self.width, 3), dtype=np.uint8)
@@ -47,13 +48,25 @@ class OpenCvGstCamera(CameraBase):
                 break
                 
     def _gst_str(self):
-        return 'nvarguscamerasrc sensor-mode=3 ! video/x-raw(memory:NVMM), width=%d, height=%d, format=(string)NV12, framerate=(fraction)%d/1 ! nvvidconv ! video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! videoconvert ! appsink' % (
-                self.capture_width, self.capture_height, self.fps, self.width, self.height)
+        # Orin IMX219 (Pi Cam v2 on CAM0): 1280x720 NV12 via Argus. Nano sensor-mode=3 / 816x616 is invalid here.
+        return (
+            'nvarguscamerasrc sensor-id=%d ! '
+            'video/x-raw(memory:NVMM), width=%d, height=%d, format=(string)NV12, framerate=(fraction)%d/1 ! '
+            'nvvidconv ! video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! '
+            'videoconvert ! video/x-raw, format=(string)BGR ! appsink drop=1'
+        ) % (
+            self.sensor_id,
+            self.capture_width,
+            self.capture_height,
+            self.fps,
+            self.width,
+            self.height,
+        )
     
     def start(self):
         if not self.cap.isOpened():
             self.cap.open(self._gst_str(), cv2.CAP_GSTREAMER)
-        if not hasattr(self, 'thread') or not self.thread.isAlive():
+        if not hasattr(self, 'thread') or not self.thread.is_alive():
             self.thread = threading.Thread(target=self._capture_frames)
             self.thread.start()
 

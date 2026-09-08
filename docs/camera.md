@@ -50,6 +50,29 @@ PYTHONPATH=src python3 scripts/demo_camera.py --backend fake --frames 20 --out d
 PYTHONPATH=src python3 scripts/demo_camera.py --backend webcam --device 0
 ```
 
+## Argus exposure warm-up (measured)
+
+`nvarguscamerasrc` starts dark and ramps auto-exposure over roughly two
+seconds. Measured indoors on CAM0 at 1280x720, mean luma of the 448² JPEG:
+
+| Time after pipeline start | Mean luma |
+| --- | --- |
+| first pull (~0.7 s) | 40 |
+| ~1.4 s | 74 |
+| ~1.7 s | 102 |
+| ~2.7 s onward | 114 (steady) |
+
+Frames pulled before convergence are about 3x underexposed. That is enough to
+flatten a coloured object into grey: a blue target measured RGB (35, 44, 49),
+only ~5 counts above the other channels, while the bare floor measured ~6. Any
+colour test run on those frames tracks the floor, and the VLM contradicted
+itself about which side the object was on.
+
+`CsiJpeg448` therefore discards frames for `warmup_s` (default 2.5 s) after
+opening the pipeline. It is a one-time cost because the pipeline stays open
+across ticks. A `num_buffers` one-shot skips the warm-up, so single-frame
+captures are still dark and should not be used for colour reasoning.
+
 ## Jetson later
 
 1. Set `backend: gst_csi` in `config/camera.yaml`.

@@ -11,8 +11,9 @@ Source: [kimbring2 on NVIDIA Forums](https://forums.developer.nvidia.com/t/using
 
 In `jetbot/robot.py`:
 
-- Default `i2c_bus = 1`
+- Default `i2c_bus = 7` on this JetPack 6.2 Orin Nano Super (40-pin pins 3/5)
 - Default `i2c_address = 112` (`0x70`)
+- Default `right_motor_alpha = -1.0` on this chassis (right wheel was inverted)
 - Still accepts `96` (`0x60`) if that device is what `i2cdetect` shows
 - Still supports SparkFun SCMD (`93` / `0x5D`)
 

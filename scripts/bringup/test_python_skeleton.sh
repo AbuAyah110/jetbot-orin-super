@@ -19,8 +19,8 @@ import jetbot_agent.hardware.csi_camera
 import jetbot_agent.hardware.audio_interface
 import jetbot_agent.audio
 import jetbot_agent.audio.audio_preprocessor
-import jetbot_agent.audio.fastconformer_asr
-import jetbot_agent.audio.fastpitch_hifigan_tts
+import jetbot_agent.audio.zipformer_asr
+import jetbot_agent.audio.piper_tts
 import jetbot_agent.engine
 import jetbot_agent.engine.trt_llm_vlm
 import jetbot_agent.engine.trt_vla_motor

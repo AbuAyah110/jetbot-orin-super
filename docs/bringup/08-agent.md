@@ -76,8 +76,8 @@ Wire ASR/TTS tools only after the matching F gates. Do **not** open duplex from 
 
 | Voice code | Minimum F gate | If not ready |
 | --- | --- | --- |
-| One-shot listen (ASR) | F4 FastConformer | No-op stub; do not claim transcripts |
-| One-shot speak (TTS) | F5 Matcha-TTS + HiFi-GAN v2 | No-op stub; sequential ALSA only after F1, sidetone off |
+| One-shot listen (ASR) | F4 Zipformer | Adapter available; agent tool wiring remains staged |
+| One-shot speak (TTS) | F5 Piper VITS | Adapter available; sequential ALSA only after F1, sidetone off |
 | Duplex / barge-in | **F6** (needs F2 AEC) | Forbidden; sequential capture-then-playback only |
 
 If F1–F4 are still open, keep I6 as documented stubs and continue I1–I5/I7/I8.

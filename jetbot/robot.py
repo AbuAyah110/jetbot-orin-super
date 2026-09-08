@@ -61,14 +61,16 @@ class Robot(SingletonConfigurable):
     left_motor = traitlets.Instance(Motor)
     right_motor = traitlets.Instance(Motor)
 
-    # Orin Nano 40-pin header I2C is bus 1 (original Nano JetBot often used bus 0).
-    i2c_bus = traitlets.Integer(default_value=1).tag(config=True)
+    # JetPack 6.2 40-pin SDA/SCL (pins 3/5) is /dev/i2c-7 on this Orin Nano Super.
+    # Onboard INA3221/FUSB301 stay on bus 1.
+    i2c_bus = traitlets.Integer(default_value=7).tag(config=True)
     # Prefer Orin expansion address 112 (0x70); falls back to 96 (0x60) if present.
     i2c_address = traitlets.Integer(default_value=112).tag(config=True)
     left_motor_channel = traitlets.Integer(default_value=1).tag(config=True)
     left_motor_alpha = traitlets.Float(default_value=1.0).tag(config=True)
     right_motor_channel = traitlets.Integer(default_value=2).tag(config=True)
-    right_motor_alpha = traitlets.Float(default_value=1.0).tag(config=True)
+    # This chassis: +value on the right motor was driving backward. Invert.
+    right_motor_alpha = traitlets.Float(default_value=-1.0).tag(config=True)
 
     def __init__(self, *args, **kwargs):
         super(Robot, self).__init__(*args, **kwargs)

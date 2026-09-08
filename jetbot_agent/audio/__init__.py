@@ -1,1 +1,6 @@
-"""WebRTC APM, FastConformer, and FastPitch/HiFi-GAN stubs for Stage F."""
+"""WebRTC APM front end plus Sherpa-ONNX Zipformer and Piper adapters."""
+
+from .piper_tts import PiperTTS
+from .zipformer_asr import ZipformerASR
+
+__all__ = ["PiperTTS", "ZipformerASR"]

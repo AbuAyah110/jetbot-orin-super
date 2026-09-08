@@ -72,9 +72,14 @@ def _amixer(card_index: int, *args: str) -> str:
 
 
 def apply_safe_mixer_baseline(card_index: int) -> str:
-    """Capture ~80%, speaker 20% unmuted (low), Mic playback/sidetone muted."""
+    """Capture ~80%, speaker 75% unmuted, Mic playback/sidetone muted.
+
+    SSS1629 Speaker 20% is −50 dB and inaudible on this mono setup.
+    75% is −16 dB, the level the user confirmed they can hear.
+    Never unmute Mic playback (hardware sidetone / feedback).
+    """
     logs = []
-    logs.append(_amixer(card_index, "sset", "Speaker", "20%", "unmute"))
+    logs.append(_amixer(card_index, "sset", "Speaker", "75%", "unmute"))
     logs.append(_amixer(card_index, "sset", "Mic", "80%", "cap"))
     logs.append(_amixer(card_index, "sset", "Mic", "playback", "0%", "mute"))
     return "\n".join(logs)
