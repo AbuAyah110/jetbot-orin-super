@@ -59,6 +59,7 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | Monocular path gate | **Does not work** — every prompt wording is a constant; superseded by ToF for creep, bumper still absent for contact | `scripts/bringup/probe_path_gate.py` |
 | Collision ToF | **Live** — VL53L0X bus 1 @ `0x29` tracks distance (≈165 mm blocked, ≈550 mm clear); this board reports ST status 11, which the driver now accepts | `.venv/bin/python scripts/bringup/probe_tof.py` |
 | Wake phrase | **Not started** — auto-listen still treats every utterance as a command, so background chat gets “I was unable to understand what you said.” Try a “hello jetbot” session gate before the next live voice pass | see Try next below |
+| Zipformer command words | **Patched, not fixed** — live ASR hears “find” as “fine” and “blue” as “blew”; bounded text repairs restore search, but a larger CPU ASR may be needed if new phrases keep missing the router | see To fix below |
 | Gamepad + episode logs | **Not started, do not implement yet** — human teleop through the existing clamps, then JSONL episodes for later offline RL. Scenario catalog and per-tick fields are locked below | see Later below |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
 | Memory | **Live** — 32.5 MiB CPU INT8 BGE, LanceDB float16 vectors, explicit teach + restart recall passed | [09-memory.md](docs/bringup/09-memory.md) |
@@ -99,6 +100,32 @@ Systemd unit stays the same.
 Gate: with the service running, background speech produces no TTS; “hello
 jetbot” then a command is heard; after the idle window the next unmatched
 utterance is silent again.
+
+## To fix — Zipformer command words (maybe a larger ASR)
+
+Patched, not fixed. Do not swap models until wake phrase is tried and a new
+live miss is recorded.
+
+The small int8 Zipformer (`sherpa-onnx-zipformer-small-en-2023-06-26`, CPU)
+hears “find the blue object and move towards it” as `FINE BLUE OBJECT AND
+MOVED TOWARDS IT` or `FINE BLEW OBJECT AND MOVED TOWARDS IT`. Those strings
+did not match the search route, so parked conversation answered “Found blue
+puck. Moving toward it” with no camera and no motors.
+
+Workaround already in `normalize_transcript`: `fine` → `find` and `blew` →
+`blue` only in front of an object noun, plus past-tense “and moved towards
+it” on the approach clause. “I am fine” / “the wind blew” stay untouched.
+
+Still broken in principle: any phrasing that does not look like
+`fine … object` will miss the repair; “hello jetbot” will need its own
+variants; stacking more regex is not a recognizer.
+
+If live logs after the wake-phrase pass still drop command verbs, try a
+**larger CPU Zipformer / sherpa-onnx English model** in the same process
+(keep Piper CPU, no PyTorch, no GPU ASR). Gate: isolated RSS still fits
+beside Cosmos (~2.88 GiB delta, ~1.7 GiB free with RAG); “find the blue
+object and move towards it” transcribes as find/blue/move without repairs;
+`I am fine` is unchanged. Do not resurrect FastConformer/NeMo for this.
 
 ## Later — gamepad teleop and episode logs
 
