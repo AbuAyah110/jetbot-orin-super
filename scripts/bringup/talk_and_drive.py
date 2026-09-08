@@ -1584,6 +1584,14 @@ def main() -> int:
         try:
             camera = CsiJpeg448(sensor_id=0, fps=15)
             camera.open()
+            print(
+                "camera_lens_shading loaded={0} path={1} error={2}".format(
+                    camera.flatfield_gain is not None,
+                    camera.calibration_path or "(disabled)",
+                    camera.flatfield_error or "(none)",
+                ),
+                flush=True,
+            )
         except Exception as exc:
             camera_error = str(exc)
             camera = None
