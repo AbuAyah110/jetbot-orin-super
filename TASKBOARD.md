@@ -61,6 +61,7 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | Wake phrase | **Not started** — auto-listen still treats every utterance as a command, so background chat gets “I was unable to understand what you said.” Try a “hello jetbot” session gate before the next live voice pass | see Try next below |
 | Zipformer command words | **Patched, not fixed** — live ASR hears “find” as “fine” and “blue” as “blew”; bounded text repairs restore search, but a larger CPU ASR may be needed if new phrases keep missing the router | see To fix below |
 | Camera aim and exposure | **Partial** — viewer captured a local B0392 flat-field map; `CsiJpeg448` now applies it to Cosmos and colour grounding (~7.5 ms/frame). Mount/focus and native Argus ISP table remain open | see To fix below |
+| Post-calibration colour labs | **Not started** — live frames are now shaded; operator instructions and the guided voice scorecard still describe the old pink-corner / raw-JPEG world. Re-run colour labs and fix the write-ups | see To fix below |
 | Gamepad + episode logs | **Not started, do not implement yet** — first P0 slice of the navigation brain (continuous `v, ω` teleop + recorder). Scenario catalog stays below | see Later gamepad / [14-navigation-brain.md](docs/bringup/14-navigation-brain.md) |
 | Navigation brain | **Planned, not started** — Cosmos as task executive; CNN+GRU student outputs `[v, ω]`; PID/encoders later. Live robot stays pulse-based until P0 is explicitly started | [14-navigation-brain.md](docs/bringup/14-navigation-brain.md) |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
@@ -184,6 +185,34 @@ pink/magenta (or the ignored margin is written down); three saved frames
 (object left / centre / right, inset from the edge) show a saturated
 target, not a grey blob; ToF spot is visible or marked; “what do you see”
 still works after `talk-and-drive` is started again.
+
+## To fix — re-run colour labs after shading
+
+Not started. Do this after a battery boot with talk-and-drive healthy and
+`camera_lens_shading loaded=True`. Do **not** loosen `locate_color` or
+`DEICTIC_EDGE_MARGIN` until these labs are scored on the corrected JPEG.
+
+The pink-corner / “red wall tint” notes in the five-demo write-up, guided
+voice scorecard, and operator setup lines were written against **raw** Argus.
+Cosmos and colour grounding now see the flat-field JPEG. Those instructions
+and the live results can disagree.
+
+Re-run, with the same physical setups as before:
+
+- `scripts/bringup/guided_voice_test.py` colour cases: find blue, find-and-go,
+  approach centred, deictic “drive toward that”, refuse ungrounded “keys”
+- “What do you see” with a blue object centre / left / right (inset from the
+  175° edge)
+- Creep still ToF-gated; shading must not change that
+
+Then **fix the instructions** to match what actually happens: how to place
+the object (avoid the ultra-wide rim), that the viewer is for recapture not
+for concurrent voice, and that a missing `b0392_flatfield.npz` falls back to
+raw. Save a new scorecard; do not overwrite the pre-calibration report.
+
+Gate: a dated scorecard exists; docs/script setup lines no longer tell the
+operator to expect magenta corners as the live colour world; deictic still
+refuses an empty floor.
 
 ## Later — gamepad teleop and episode logs
 
