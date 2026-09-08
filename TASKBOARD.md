@@ -60,7 +60,7 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | Collision ToF | **Live** — VL53L0X bus 1 @ `0x29` tracks distance (≈165 mm blocked, ≈550 mm clear); this board reports ST status 11, which the driver now accepts | `.venv/bin/python scripts/bringup/probe_tof.py` |
 | Wake phrase | **Not started** — auto-listen still treats every utterance as a command, so background chat gets “I was unable to understand what you said.” Try a “hello jetbot” session gate before the next live voice pass | see Try next below |
 | Zipformer command words | **Patched, not fixed** — live ASR hears “find” as “fine” and “blue” as “blew”; bounded text repairs restore search, but a larger CPU ASR may be needed if new phrases keep missing the router | see To fix below |
-| Camera aim and exposure | **Not started** — Arducam B0392 IMX219 175° M12 (155° H) on Argus; needs mount, M12 focus, lens-shading (pink edges), and a check streamer. Pi libcamera JSON is not the Jetson path | see To fix below |
+| Camera aim and exposure | **Partial** — check streamer live at `:8765`; B0392 flat-field map stored locally. Talk-and-drive still sees raw Argus. Mount/focus and Argus ISP table remain open | see To fix below |
 | Gamepad + episode logs | **Not started, do not implement yet** — first P0 slice of the navigation brain (continuous `v, ω` teleop + recorder). Scenario catalog stays below | see Later gamepad / [14-navigation-brain.md](docs/bringup/14-navigation-brain.md) |
 | Navigation brain | **Planned, not started** — Cosmos as task executive; CNN+GRU student outputs `[v, ω]`; PID/encoders later. Live robot stays pulse-based until P0 is explicitly started | [14-navigation-brain.md](docs/bringup/14-navigation-brain.md) |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
@@ -131,7 +131,7 @@ object and move towards it” transcribes as find/blue/move without repairs;
 
 ## To fix — camera aim, focus, lens shading, and check streamer
 
-Not started. Hardware is the BOM camera: **Arducam B0392**, 8 MP IMX219,
+**Partial.** Hardware is the BOM camera: **Arducam B0392**, 8 MP IMX219,
 M12 ultra-wide **175° D × 155° H × 115° V**, CSI on CAM0, Argus
 `nvarguscamerasrc` (not Raspberry Pi libcamera). Do not replace the live
 448² Cosmos path. One CSI source.
@@ -164,12 +164,14 @@ blue toward grey. Measure whether a locked exposure / white-balance keeps a
 blue puck blue at 0.5–2 m without blowing the window, then keep or shorten
 warmup.
 
-**Check streamer:** add a bring-up preview (MJPEG or similar) so an operator
-can see live framing, focus, and corner colour **without** asking Cosmos
-“what do you see.” It must use the **same** Argus camera. Because CSI is
-exclusive, the streamer runs **instead of** `talk-and-drive`, or as a tee
-from that process — never a second `nvarguscamerasrc`. Stop motors while
-streaming. Notebook `csi_camera_test.ipynb` is not this tool.
+**Check streamer:** `scripts/bringup/camera_viewer.py` (port 8765) shows the
+exact 448² JPEG, raw vs flat-field, and a “Capture flat field” button. CSI is
+exclusive: stop `jetbot-talk-and-drive` first. Never a second
+`nvarguscamerasrc`. The first live map is
+`data/camera/b0392_flatfield.npz` (gitignored); corner luma ratio 1.47 → 1.02
+on the captured field. Recapture covering the whole view with a matte white
+surface if that map was taken of the room. Talk-and-drive still uses
+**uncorrected** JPEGs until this gain is applied in `CsiJpeg448`.
 
 Keep mode A: `talk_and_drive.py` still captures 448² JPEG for Cosmos. A later
 nav tee (~160×120) uses the **same** calibrated mount and shading.

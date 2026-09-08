@@ -57,6 +57,8 @@ build/
 !/data/frames/**/.gitkeep
 /data/bringup/**
 !/data/bringup/.gitkeep
+/data/camera/**
+!/data/camera/.gitkeep
 /data/lab/**
 !/data/lab/
 !/data/lab/.gitkeep
