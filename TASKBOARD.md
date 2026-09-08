@@ -149,6 +149,18 @@ short drive of each listed scenario writes a readable episode with `RGB_t`,
 `ToF_t`, `human_v_t`, `human_ω_t`; `goal_*` either real or explicitly absent,
 never guessed.
 
+ROS 2 is **not** part of this pass and is not a reason to start it early.
+Nav2 cannot run without odometry, a rangefinder map, and a TF tree this robot
+does not have. DDS next to Cosmos (~2.88 GiB) on 8 GB, plus a second writer
+to the motor HAT, would make the live voice loop worse, not safer.
+
+The only later ROS-shaped payoff is **logging transport**, not control: a
+rosbag (or timestamped `/cmd_vel` + image + range topics) so workstation
+offline RL can time-align ticks. If ROS is ever added, it **subscribes** to
+commands the existing Python executor already accepts. It must not open I2C
+or PWM. JSONL + JPEG paths remain the default log; a bag is optional once
+episodes exist.
+
 ## Ordered execution
 
 ### 1. Workstation — export Cosmos INT4 ONNX
