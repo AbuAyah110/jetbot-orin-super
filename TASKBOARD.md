@@ -60,7 +60,7 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | Collision ToF | **Live** — VL53L0X bus 1 @ `0x29` tracks distance (≈165 mm blocked, ≈550 mm clear); this board reports ST status 11, which the driver now accepts | `.venv/bin/python scripts/bringup/probe_tof.py` |
 | Wake phrase | **Not started** — auto-listen still treats every utterance as a command, so background chat gets “I was unable to understand what you said.” Try a “hello jetbot” session gate before the next live voice pass | see Try next below |
 | Zipformer command words | **Patched, not fixed** — live ASR hears “find” as “fine” and “blue” as “blew”; bounded text repairs restore search, but a larger CPU ASR may be needed if new phrases keep missing the router | see To fix below |
-| Camera aim and exposure | **Partial** — check streamer live at `:8765`; B0392 flat-field map stored locally. Talk-and-drive still sees raw Argus. Mount/focus and Argus ISP table remain open | see To fix below |
+| Camera aim and exposure | **Partial** — viewer captured a local B0392 flat-field map; `CsiJpeg448` now applies it to Cosmos and colour grounding (~7.5 ms/frame). Mount/focus and native Argus ISP table remain open | see To fix below |
 | Gamepad + episode logs | **Not started, do not implement yet** — first P0 slice of the navigation brain (continuous `v, ω` teleop + recorder). Scenario catalog stays below | see Later gamepad / [14-navigation-brain.md](docs/bringup/14-navigation-brain.md) |
 | Navigation brain | **Planned, not started** — Cosmos as task executive; CNN+GRU student outputs `[v, ω]`; PID/encoders later. Live robot stays pulse-based until P0 is explicitly started | [14-navigation-brain.md](docs/bringup/14-navigation-brain.md) |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
@@ -170,8 +170,11 @@ exclusive: stop `jetbot-talk-and-drive` first. Never a second
 `nvarguscamerasrc`. The first live map is
 `data/camera/b0392_flatfield.npz` (gitignored); corner luma ratio 1.47 → 1.02
 on the captured field. Recapture covering the whole view with a matte white
-surface if that map was taken of the room. Talk-and-drive still uses
-**uncorrected** JPEGs until this gain is applied in `CsiJpeg448`.
+surface if that map was taken of the room. `CsiJpeg448` now loads this map by
+default, so talk-and-drive, Cosmos, and deterministic colour grounding receive
+the same corrected 448² JPEG. Missing/corrupt/mismatched maps fall back to raw
+and expose `camera_lens_shading ... error=...` in the startup log. Measured
+decode + gain + re-encode cost: ~7.5 ms/frame.
 
 Keep mode A: `talk_and_drive.py` still captures 448² JPEG for Cosmos. A later
 nav tee (~160×120) uses the **same** calibrated mount and shading.

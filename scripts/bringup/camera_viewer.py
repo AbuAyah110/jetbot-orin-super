@@ -9,18 +9,15 @@ Arducam's rpicam/libcamera tuning JSON is not compatible with this pipeline.
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import signal
 import threading
-import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
-from PIL import Image, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[2]
 import sys
@@ -33,130 +30,19 @@ if SYSTEM_DIST_PACKAGES.is_dir() and str(SYSTEM_DIST_PACKAGES) not in sys.path:
     sys.path.append(str(SYSTEM_DIST_PACKAGES))
 
 from jetbot_agent.robot_loop.csi_jpeg import CsiJpeg448  # noqa: E402
+from jetbot_agent.robot_loop.lens_shading import (  # noqa: E402
+    DEFAULT_CALIBRATION_PATH,
+    apply_flatfield,
+    build_flatfield_gain,
+    decode_jpeg,
+    encode_jpeg,
+    flatfield_metrics,
+    load_calibration,
+    save_calibration,
+)
 
 
-DEFAULT_CALIBRATION = ROOT / "data" / "camera" / "b0392_flatfield.npz"
 CALIBRATION_FRAMES = 30
-GAIN_MIN = 0.5
-GAIN_MAX = 2.5
-
-
-def decode_jpeg(jpeg: bytes) -> np.ndarray:
-    return np.asarray(Image.open(io.BytesIO(jpeg)).convert("RGB"), dtype=np.uint8)
-
-
-def encode_jpeg(rgb: np.ndarray, quality: int = 90) -> bytes:
-    output = io.BytesIO()
-    Image.fromarray(rgb.astype(np.uint8), "RGB").save(
-        output, format="JPEG", quality=quality
-    )
-    return output.getvalue()
-
-
-def build_flatfield_gain(
-    frames: list[np.ndarray],
-    *,
-    blur_radius: float = 24.0,
-) -> tuple[np.ndarray, dict]:
-    """Build a smooth RGB gain map from a uniformly lit neutral field."""
-    if len(frames) < 3:
-        raise ValueError("at least three flat-field frames are required")
-    shapes = {tuple(frame.shape) for frame in frames}
-    if len(shapes) != 1 or next(iter(shapes))[-1] != 3:
-        raise ValueError("flat-field frames must share one HxWx3 shape")
-
-    average = np.mean(np.stack(frames).astype(np.float32), axis=0)
-    smooth = np.asarray(
-        Image.fromarray(np.clip(average, 0, 255).astype(np.uint8), "RGB").filter(
-            ImageFilter.GaussianBlur(radius=float(blur_radius))
-        ),
-        dtype=np.float32,
-    )
-    height, width, _ = smooth.shape
-    y0, y1 = int(height * 0.4), int(height * 0.6)
-    x0, x1 = int(width * 0.4), int(width * 0.6)
-    reference = np.median(smooth[y0:y1, x0:x1], axis=(0, 1))
-    if np.any(reference < 16.0):
-        raise ValueError(
-            "flat field is too dark; use a bright, uniformly lit white surface"
-        )
-
-    gain = reference.reshape(1, 1, 3) / np.maximum(smooth, 1.0)
-    gain = np.clip(gain, GAIN_MIN, GAIN_MAX).astype(np.float32)
-    corrected = apply_flatfield(average, gain)
-    metrics = flatfield_metrics(average, corrected)
-    metrics.update(
-        {
-            "frames": len(frames),
-            "width": width,
-            "height": height,
-            "center_rgb": [round(float(value), 2) for value in reference],
-            "gain_min": round(float(gain.min()), 4),
-            "gain_max": round(float(gain.max()), 4),
-            "created_unix_s": time.time(),
-        }
-    )
-    return gain, metrics
-
-
-def apply_flatfield(rgb: np.ndarray, gain: np.ndarray) -> np.ndarray:
-    if tuple(rgb.shape) != tuple(gain.shape):
-        raise ValueError("RGB frame and flat-field gain dimensions differ")
-    return np.clip(rgb.astype(np.float32) * gain, 0, 255).astype(np.uint8)
-
-
-def flatfield_metrics(raw: np.ndarray, corrected: np.ndarray) -> dict:
-    """Report edge/centre luma and colour imbalance before and after."""
-
-    def sample(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        height, width, _ = image.shape
-        cy0, cy1 = int(height * 0.4), int(height * 0.6)
-        cx0, cx1 = int(width * 0.4), int(width * 0.6)
-        centre = np.mean(image[cy0:cy1, cx0:cx1], axis=(0, 1))
-        band = max(1, int(min(height, width) * 0.12))
-        corners = np.concatenate(
-            (
-                image[:band, :band].reshape(-1, 3),
-                image[:band, -band:].reshape(-1, 3),
-                image[-band:, :band].reshape(-1, 3),
-                image[-band:, -band:].reshape(-1, 3),
-            ),
-            axis=0,
-        )
-        return centre, np.mean(corners, axis=0)
-
-    result = {}
-    for name, image in (("raw", raw), ("corrected", corrected)):
-        centre, corner = sample(image.astype(np.float32))
-        centre_luma = float(np.mean(centre))
-        corner_luma = float(np.mean(corner))
-        result[name] = {
-            "centre_rgb": [round(float(value), 2) for value in centre],
-            "corner_rgb": [round(float(value), 2) for value in corner],
-            "corner_to_centre_luma": round(
-                corner_luma / max(centre_luma, 1.0), 4
-            ),
-            "corner_channel_spread": round(float(np.max(corner) - np.min(corner)), 2),
-        }
-    return result
-
-
-def save_calibration(path: Path, gain: np.ndarray, metrics: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, gain=gain, metadata=json.dumps(metrics))
-
-
-def load_calibration(path: Path) -> tuple[np.ndarray | None, dict]:
-    if not path.is_file():
-        return None, {}
-    with np.load(path, allow_pickle=False) as payload:
-        gain = payload["gain"].astype(np.float32)
-        raw_metadata = str(payload["metadata"]) if "metadata" in payload else "{}"
-    try:
-        metadata = json.loads(raw_metadata)
-    except json.JSONDecodeError:
-        metadata = {}
-    return gain, metadata
 
 
 class CameraFeed:
@@ -397,11 +283,19 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--sensor-id", type=int, default=0)
     parser.add_argument("--fps", type=int, default=10)
-    parser.add_argument("--calibration", type=Path, default=DEFAULT_CALIBRATION)
+    parser.add_argument(
+        "--calibration", type=Path, default=DEFAULT_CALIBRATION_PATH
+    )
     args = parser.parse_args()
 
     feed = CameraFeed(
-        CsiJpeg448(sensor_id=args.sensor_id, fps=args.fps),
+        # Viewer owns correction itself so its raw pane remains truly raw and
+        # its corrected pane applies the map exactly once.
+        CsiJpeg448(
+            sensor_id=args.sensor_id,
+            fps=args.fps,
+            lens_shading=False,
+        ),
         args.calibration,
     )
     server = ThreadingHTTPServer((args.host, args.port), make_handler(feed))

@@ -6,7 +6,14 @@ Does not start Argus until :meth:`CsiJpeg448.open`. Unit tests must only inspect
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
+
+from jetbot_agent.robot_loop.lens_shading import (
+    DEFAULT_CALIBRATION_PATH,
+    correct_jpeg,
+    load_calibration,
+)
 
 CSI_JPEG_SIZE = 448
 # Sensor mode matches Stage C (IMX219 CAM0). Resize happens in NVMM before JPEG.
@@ -35,6 +42,8 @@ class CsiJpeg448:
         fps: int = 15,
         num_buffers: Optional[int] = None,
         warmup_s: float = DEFAULT_WARMUP_S,
+        lens_shading: bool = True,
+        calibration_path: Optional[Path] = DEFAULT_CALIBRATION_PATH,
     ) -> None:
         self.sensor_id = int(sensor_id)
         self.fps = int(fps)
@@ -45,6 +54,22 @@ class CsiJpeg448:
         self._pipeline = None
         self._appsink = None
         self.warmup_frames_dropped = 0
+        self.lens_shading = bool(lens_shading)
+        self.calibration_path = (
+            Path(calibration_path) if calibration_path is not None else None
+        )
+        self.flatfield_gain = None
+        self.flatfield_metadata: dict = {}
+        self.flatfield_error = ""
+        if self.lens_shading and self.calibration_path is not None:
+            try:
+                self.flatfield_gain, self.flatfield_metadata = load_calibration(
+                    self.calibration_path
+                )
+            except Exception as exc:
+                # A bad optional map must not take down the camera. Expose the
+                # error so live startup can report that capture fell back raw.
+                self.flatfield_error = "{0}: {1}".format(type(exc).__name__, exc)
 
     def gst_pipeline(self) -> str:
         """Single pipeline string. One nvarguscamerasrc, one nvjpegenc."""
@@ -150,9 +175,18 @@ class CsiJpeg448:
         if not ok:
             raise RuntimeError('CSI JPEG buffer map failed')
         try:
-            return bytes(mapinfo.data)
+            jpeg = bytes(mapinfo.data)
         finally:
             buf.unmap(mapinfo)
+        if self.flatfield_gain is None:
+            return jpeg
+        try:
+            return correct_jpeg(jpeg, self.flatfield_gain)
+        except Exception as exc:
+            # Resolution mismatch or a corrupt map fails open to the original
+            # camera frame; motion safety remains ToF-authoritative.
+            self.flatfield_error = "{0}: {1}".format(type(exc).__name__, exc)
+            return jpeg
 
     def close(self) -> None:
         if self._pipeline is None:
