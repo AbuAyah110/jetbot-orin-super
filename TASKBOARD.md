@@ -58,6 +58,7 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | Go-around detour | **Partial** — colour-grounded targets only; honest refusal otherwise | `scripts/bringup/talk_and_drive.py` |
 | Monocular path gate | **Does not work** — every prompt wording is a constant; superseded by ToF for creep, bumper still absent for contact | `scripts/bringup/probe_path_gate.py` |
 | Collision ToF | **Live** — VL53L0X bus 1 @ `0x29` tracks distance (≈165 mm blocked, ≈550 mm clear); this board reports ST status 11, which the driver now accepts | `.venv/bin/python scripts/bringup/probe_tof.py` |
+| Wake phrase | **Not started** — auto-listen still treats every utterance as a command, so background chat gets “I was unable to understand what you said.” Try a “hello jetbot” session gate before the next live voice pass | see Try next below |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
 | Memory | **Live** — 32.5 MiB CPU INT8 BGE, LanceDB float16 vectors, explicit teach + restart recall passed | [09-memory.md](docs/bringup/09-memory.md) |
 
@@ -67,6 +68,36 @@ LLM + visual engines resident **5441 / 7620 MB**, so the Cosmos delta is
 threshold, so KV stays at 4096. The system-wide peak still includes ~1.5–1.9 GiB
 of Cursor remote. Swap peak 1575/32768 MB. See
 [Cosmos Nano bring-up](docs/bringup/07-cosmos-nano.md).
+
+## Try next — wake phrase before commands
+
+Not started. The live loop (`scripts/bringup/talk_and_drive.py --auto-listen`)
+keeps the mic open, transcribes every VAD utterance with Zipformer, then routes
+it. Unusable ASR speaks `UNDERSTAND_FAIL_PHRASE`; leftover speech still reaches
+Cosmos conversation. Room chat therefore talks back even when nobody addressed
+the robot.
+
+Wanted behaviour:
+
+- Stay **asleep** until a wake phrase such as “hello jetbot” (plus Zipformer
+  variants: *hello jet bot*, *hey jetbot*).
+- While asleep: still capture and transcribe, but **stay silent** — no
+  understand-fail TTS, no Cosmos, no motors.
+- After wake: short ack, then the existing command router for a short window
+  (about 8–15 s after the last successful command) or until “goodbye jetbot”.
+- Allow wake + command in one sentence (“hello jetbot, turn left”).
+- Do **not** add a streaming keyword-spotter in this pass. Offline Zipformer
+  already has text before routing; a Porcupine / openWakeWord path is a later
+  option if idle CPU becomes the problem.
+
+Likely files: `jetbot_agent/robot_loop/intents.py` (matcher + ASR repairs),
+`scripts/bringup/talk_and_drive.py` (session gate before
+`asr_transcript_usable`), unit tests in `tests/unit/test_voice_intents.py`.
+Systemd unit stays the same.
+
+Gate: with the service running, background speech produces no TTS; “hello
+jetbot” then a command is heard; after the idle window the next unmatched
+utterance is silent again.
 
 ## Ordered execution
 
