@@ -59,6 +59,7 @@ repository-local data, so no multi-GB ONNX tree is duplicated or tracked.
 | Monocular path gate | **Does not work** — every prompt wording is a constant; superseded by ToF for creep, bumper still absent for contact | `scripts/bringup/probe_path_gate.py` |
 | Collision ToF | **Live** — VL53L0X bus 1 @ `0x29` tracks distance (≈165 mm blocked, ≈550 mm clear); this board reports ST status 11, which the driver now accepts | `.venv/bin/python scripts/bringup/probe_tof.py` |
 | Wake phrase | **Not started** — auto-listen still treats every utterance as a command, so background chat gets “I was unable to understand what you said.” Try a “hello jetbot” session gate before the next live voice pass | see Try next below |
+| Gamepad + episode logs | **Not started, do not implement yet** — human teleop through the existing clamps, then JSONL episodes for later offline RL. Scenario catalog and per-tick fields are locked below | see Later below |
 | Resume after power | User unit enabled; 20 s delay then same loop | [11-resume-after-power.md](docs/bringup/11-resume-after-power.md) |
 | Memory | **Live** — 32.5 MiB CPU INT8 BGE, LanceDB float16 vectors, explicit teach + restart recall passed | [09-memory.md](docs/bringup/09-memory.md) |
 
@@ -98,6 +99,55 @@ Systemd unit stays the same.
 Gate: with the service running, background speech produces no TTS; “hello
 jetbot” then a command is heard; after the idle window the next unmatched
 utterance is silent again.
+
+## Later — gamepad teleop and episode logs
+
+Not started. Do not implement until wake phrase is tried. Estimate remains
+about 1–2 days of logging/teleop, **not** on-device training. PyTorch stays
+out of the robot loop; any offline RL job is a later workstation pass over
+ignored `data/` episodes.
+
+Wanted control: a USB gamepad whose `v` / `ω` go through the same velocity
+and duration-then-stop clamps as voice. Release-to-stop / deadman beats a
+held stick; stick or e-stop beats voice. Do not reuse `jetbot/local_controller.py`
+as the live path (Jupyter/pygame widget); do not drive PWM from the stick.
+
+Wanted log, one JSONL row per tick plus a JPEG path:
+
+| Field | Meaning | Today |
+| --- | --- | --- |
+| `RGB_t` | CSI 448×448 JPEG at tick `t` | Live (`CsiJpeg448`) |
+| `ToF_t` | VL53L0X range + `kind` | Live (bus 1 @ `0x29`) |
+| `goal_distance_t` | metres to the labelled destination | **Missing** — need a goal source (colour lock, taught place, or operator mark) |
+| `goal_bearing_t` | robot-relative heading to that destination, radians | **Missing** — same gap; no odometry/goal tracker yet |
+| `human_v_t` | human longitudinal command | From stick, after clamps |
+| `human_ω_t` | human yaw command | From stick, after clamps |
+
+Also store `scenario`, `episode_id`, `t`, `source=gamepad`, and stop reason.
+Do not invent `goal_*` from Cosmos prose.
+
+Record these scenarios as labelled episodes (several takes each, success and
+failure both kept):
+
+- straight hallway
+- wide turn
+- tight turn
+- left around obstacle
+- right around obstacle
+- S-curve
+- two obstacles
+- chair legs
+- narrow doorway
+- approach obstacle and stop
+- recover from bad angle
+- back away
+- turn around
+- approach destination
+
+Gate when this is eventually built: releasing the stick stops the wheels; one
+short drive of each listed scenario writes a readable episode with `RGB_t`,
+`ToF_t`, `human_v_t`, `human_ω_t`; `goal_*` either real or explicitly absent,
+never guessed.
 
 ## Ordered execution
 
